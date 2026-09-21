@@ -7,6 +7,9 @@ __pycache__/
 *.pyc
 eval_pipeline/.venv/
 
+# 真实密钥（云端裁判模型的 API key），.env.example 是占位模板，会提交
+eval_pipeline/.env
+
 # 跑评测产生的结果（含调用真实API的输出，体积会越跑越大，不适合入库）
 eval_pipeline/results/
 

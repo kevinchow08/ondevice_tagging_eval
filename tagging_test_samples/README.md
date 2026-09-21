@@ -1,28 +1,32 @@
-# 端侧打标签模型测试输入样本
+# 测试样本 / Test Samples
 
-这批东西不是"数据集"，是给你的 Qwen3.6-2B（或其他开放词表打标模型）攒的一批**测试输入**。
-没有标准答案文件——按之前聊的思路，开放词表模型不该用固定标准答案做精确匹配评分，
-`images_manifest.csv` / `documents_manifest.csv` 里的"参考标签"只是给你自己核对用的弱参考，
-不是拿来做 exact-match 打分的 ground truth。
+[中文](#中文) | [English](#english)
 
-## images/（200张）
+---
 
-来源：ImageNet 每类抽 1 张的公开图片集（github.com/EliSchwartz/imagenet-sample-images），
-从原始 1000 类里按跨度均匀抽了 200 张，覆盖动物、交通工具、乐器、日用品、建筑等大类，
-避免只抽到某一个领域。
+## 中文
 
-- 文件名格式：`<WordNet ID>_<英文类别名>.JPEG`，类别名已经编码在文件名里，比如
-  `n01530575_brambling.JPEG` 就是一只燕雀。
-- `images_manifest.csv`：filename / wordnet_id / reference_label_en 三列，方便你写脚本批量核对。
+这批文件是给 [eval_pipeline](../eval_pipeline) 用的**测试输入**，不是"数据集"——没有附带标准答案文件。按照 [根目录 README](../README.md) 里说的评测思路，开放词表打标签任务不该用固定标准答案做字符串精确匹配评分，`*_manifest.csv` 里的"参考标签"只是弱参考，方便你自己人工核对，不是用来做 exact-match 打分的 ground truth。
 
-用法：把这 200 张丢给你的模型跑一遍，输出的标签跟文件名里的类别做**语义相似度**比对
-（别用精确字符串匹配），或者挑几十张人工过一遍眼，看有没有明显瞎标、漏标。
+图片和文档打包成 `images.zip` / `documents.zip`（不直接入库原始文件），使用前先解压：
 
-## documents/（6份）
+```bash
+unzip images.zip
+unzip documents.zip
+```
 
-因为公开的"真实业务文档"数据集大多要通过 Hugging Face 或专门的数据托管站下载，这次环境网络
-只放通了 GitHub，没法直接下到那类数据集，所以这 6 份是我按常见文档类型现写的示例内容
-（中英文各半，都是虚构的公司/人名，专门给测试用）：
+### images/（200 张）
+
+来源：ImageNet 每类抽 1 张的公开图片集（[github.com/EliSchwartz/imagenet-sample-images](https://github.com/EliSchwartz/imagenet-sample-images)），从原始 1000 类里按跨度均匀抽了 200 张，覆盖动物、交通工具、乐器、日用品、建筑等大类，避免只集中在某一个领域。
+
+- 文件名格式：`<WordNet ID>_<英文类别名>.JPEG`，类别名已经编码在文件名里，比如 `n01530575_brambling.JPEG` 就是一只燕雀。
+- `images_manifest.csv`：`filename` / `wordnet_id` / `reference_label_en` 三列，方便写脚本批量核对。
+
+用法：把这 200 张丢给被测模型跑一遍，输出标签跟文件名里的类别做**语义相似度**比对（不要用精确字符串匹配），或者挑几十张人工过一遍眼，看有没有明显瞎标、漏标。
+
+### documents/（6 份）
+
+公开的"真实业务文档"数据集大多需要从 Hugging Face 或专门的数据托管站下载，考虑到环境限制，这 6 份是按常见文档类型手写的示例内容（中英文各半，公司名/人名均为虚构，专门用于测试）：
 
 | 文件 | 类型 |
 |---|---|
@@ -33,18 +37,63 @@
 | 05_产品规格书_spec_sheet.pdf | 产品规格书 |
 | 06_news_article.pdf | 新闻报道（英文） |
 
-内容是真实句子、真实表格结构，不是乱数字乱字符，模型应该能从内容里读出"这是发票""这是合同"
-这类文档级标签，也能抽出里面的实体（公司名、金额、日期）。
+内容是真实句子、真实表格结构，不是随机字符堆砌，模型应该能从内容里读出"这是发票""这是合同"这类文档级标签，也能抽出其中的实体（公司名、金额、日期）。
 
-如果你要测更大规模、更贴近真实业务的文档集，之后可以考虑：
-1. 让我用 Chrome 直接去 Hugging Face 网页上手动下载几个文档分类数据集（比如 RVL-CDIP），
-   走浏览器而不是命令行，绕开这次命令行网络的限制；
-2. 或者你自己攒一批脱敏后的真实文档（发票、合同扫描件等），我可以帮你批量转格式、切分。
+如果需要更大规模、更贴近真实业务场景的文档集，可以考虑：
+1. 用浏览器手动去 Hugging Face 等站点下载现成的文档分类数据集（比如 RVL-CDIP）；
+2. 自己准备一批脱敏后的真实文档（发票、合同扫描件等）。
 
-## 建议的测试流程（复述一下之前聊的逻辑）
+### 建议的测试流程
 
-1. 用一个更强的模型（云端大模型或者我）对这 206 个样本先跑一遍，生成"参考标签"存下来。
-2. 跑你的端侧模型，拿到它自己的标签。
-3. 两边对比：语义相似度看覆盖率，或者直接把"输入+端侧模型标签"丢给强模型当裁判，
-   问它有没有瞎编、有没有漏标、准不准。
-4. 分图片/文档两类分别看结果，别混在一起算一个总分——图片和文档对模型是完全不同的能力。
+1. 用一个更强的模型对这 206 个样本先跑一遍（或者直接用 [llm_judge.py](../eval_pipeline/llm_judge.py) 的裁判评审路径，不需要单独生成参考标签）。
+2. 跑被测的端侧模型，拿到它自己的标签。
+3. 两边对比：语义相似度看覆盖率，或者把"原始内容 + 端侧模型标签"丢给强模型当裁判，问它有没有瞎编、有没有漏标、准不准。
+4. 图片和文档分开看结果，不要混在一起算一个总分——这是模型两种完全不同的能力。
+
+---
+
+## English
+
+These files are **test inputs** for [eval_pipeline](../eval_pipeline), not a labeled dataset — there is no ground-truth answer key. Per the methodology in the [root README](../README.md), open-vocabulary tagging shouldn't be scored by exact string match against a fixed answer list; the "reference labels" in `*_manifest.csv` are a loose reference for manual spot-checking, not exact-match ground truth.
+
+Images and documents ship as `images.zip` / `documents.zip` (raw files aren't checked in directly) — unzip before use:
+
+```bash
+unzip images.zip
+unzip documents.zip
+```
+
+### images/ (200 files)
+
+Source: one sample image per class from the public [ImageNet sample image set](https://github.com/EliSchwartz/imagenet-sample-images), evenly sampled to 200 images out of the original 1000 classes, spanning animals, vehicles, instruments, everyday objects, and buildings so no single domain dominates.
+
+- Filename format: `<WordNet ID>_<English class name>.JPEG` — the class name is encoded right in the filename, e.g. `n01530575_brambling.JPEG` is a brambling (a finch).
+- `images_manifest.csv`: three columns, `filename` / `wordnet_id` / `reference_label_en`, for scripting bulk checks.
+
+Usage: run the candidate model over these 200 images and compare its output tags against the filename's class via **semantic similarity** (not exact string match), or manually eyeball a few dozen for obvious hallucination/omission.
+
+### documents/ (6 files)
+
+Public "real business document" datasets mostly require downloading from Hugging Face or a dedicated data hosting site; given environment constraints, these 6 are hand-written examples covering common document types (half Chinese, half English, all company/person names fictional, purpose-built for testing):
+
+| File | Type |
+|---|---|
+| 01_增值税发票_invoice.pdf | VAT invoice |
+| 02_resume_engineer.pdf | Resume (English) |
+| 03_合同节选_contract.pdf | Contract excerpt |
+| 04_meeting_minutes.pdf | Meeting minutes (English) |
+| 05_产品规格书_spec_sheet.pdf | Product spec sheet |
+| 06_news_article.pdf | News article (English) |
+
+Content is real sentences and real table structures, not random characters — a model should be able to read document-level tags ("this is an invoice", "this is a contract") from the content, as well as extract entities (company names, amounts, dates).
+
+For a larger, more realistic document set, consider:
+1. Manually downloading an existing document classification dataset (e.g. RVL-CDIP) from a site like Hugging Face via a browser;
+2. Supplying your own de-identified real documents (invoices, scanned contracts, etc).
+
+### Suggested evaluation flow
+
+1. Run a stronger model over these 206 samples once (or just use the [llm_judge.py](../eval_pipeline/llm_judge.py) judge path directly, which doesn't need a separately-generated reference tag set).
+2. Run the candidate on-device model to get its own tags.
+3. Compare the two: check coverage via semantic similarity, or hand "original content + candidate tags" to the stronger model as a judge and ask whether it hallucinated, missed anything, or got it right.
+4. Look at images and documents separately — don't blend them into one overall score, since they exercise completely different model capabilities.
