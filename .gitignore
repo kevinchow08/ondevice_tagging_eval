@@ -1,0 +1,14 @@
+# 原始测试样本（体积大/数量多，用 tagging_test_samples/*.zip 代替提交）
+tagging_test_samples/images/
+tagging_test_samples/documents/
+
+# Python
+__pycache__/
+*.pyc
+eval_pipeline/.venv/
+
+# 跑评测产生的结果（含调用真实API的输出，体积会越跑越大，不适合入库）
+eval_pipeline/results/
+
+# macOS
+.DS_Store
