@@ -45,7 +45,7 @@ unzip documents.zip
 
 ### 建议的测试流程
 
-1. 用一个更强的模型对这 206 个样本先跑一遍（或者直接用 [llm_judge.py](../eval_pipeline/llm_judge.py) 的裁判评审路径，不需要单独生成参考标签）。
+1. 用一个更强的模型对这 206 个样本先跑一遍（或者直接用 [llm_judge.py](../eval_pipeline/scripts/llm_judge.py) 的裁判评审路径，不需要单独生成参考标签）。
 2. 跑被测的端侧模型，拿到它自己的标签。
 3. 两边对比：语义相似度看覆盖率，或者把"原始内容 + 端侧模型标签"丢给强模型当裁判，问它有没有瞎编、有没有漏标、准不准。
 4. 图片和文档分开看结果，不要混在一起算一个总分——这是模型两种完全不同的能力。
@@ -93,7 +93,7 @@ For a larger, more realistic document set, consider:
 
 ### Suggested evaluation flow
 
-1. Run a stronger model over these 206 samples once (or just use the [llm_judge.py](../eval_pipeline/llm_judge.py) judge path directly, which doesn't need a separately-generated reference tag set).
+1. Run a stronger model over these 206 samples once (or just use the [llm_judge.py](../eval_pipeline/scripts/llm_judge.py) judge path directly, which doesn't need a separately-generated reference tag set).
 2. Run the candidate on-device model to get its own tags.
 3. Compare the two: check coverage via semantic similarity, or hand "original content + candidate tags" to the stronger model as a judge and ask whether it hallucinated, missed anything, or got it right.
 4. Look at images and documents separately — don't blend them into one overall score, since they exercise completely different model capabilities.

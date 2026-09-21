@@ -4,20 +4,24 @@ LLM-as-judge：用 config.py 里 reference profile 的模型，直接看着原�
 评审 small 模型打出来的标签有没有瞎编、有没有漏打、准不准。
 不需要先跑 reference 的 tag_images.py/tag_documents.py，这条路是独立的。
 
-用法：
-  python llm_judge.py --kind images --limit 30      # 先抽30张看看效果
-  python llm_judge.py --kind documents
-  python llm_judge.py --kind images --concurrency 4  # 并发跑，注意云端API可能有限速，先从小并发试起
+用法（在 eval_pipeline/ 目录下运行）：
+  python scripts/llm_judge.py --kind images --limit 30      # 先抽30张看看效果
+  python scripts/llm_judge.py --kind documents
+  python scripts/llm_judge.py --kind images --concurrency 4  # 并发跑，注意云端API可能有限速，先从小并发试起
 
 输出：results/judge_images.jsonl 或 results/judge_documents.jsonl
 """
 import argparse
 import json
 import os
+import sys
+from pathlib import Path
 
-import config
-from prompts import get_prompt
-from tagger_core import call_with_retry, encode_image_b64, get_client, parse_json_loose, run_concurrent
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from core import config
+from core.client import call_with_retry, encode_image_b64, get_client, parse_json_loose, run_concurrent
+from core.prompts import get_prompt
 
 
 def load_jsonl(path):

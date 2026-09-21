@@ -4,10 +4,10 @@
 先用 pdfplumber 抽文本，再把文本喂给模型（如果你的模型是直接吃文档图片而不是文本，
 把 extract_text() 换成"把PDF转成图片再走 tag_images.py 那套 image_url 流程"即可）。
 
-用法：
-  python tag_documents.py --profile small
-  python tag_documents.py --profile reference
-  python tag_documents.py --profile small --concurrency 4   # 并发跑，见README
+用法（在 eval_pipeline/ 目录下运行）：
+  python scripts/tag_documents.py --profile small
+  python scripts/tag_documents.py --profile reference
+  python scripts/tag_documents.py --profile small --concurrency 4   # 并发跑，见README
 
 输出：results/docs_tags_<profile>.jsonl
 """
@@ -15,20 +15,26 @@ import argparse
 import csv
 import json
 import os
+import sys
+import time
+from pathlib import Path
 
 import pdfplumber
 
-import config
-from prompts import get_prompt
-from tagger_core import (
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from core import config
+from core.client import (
     DOCUMENT_TAGS_SCHEMA,
     call_with_retry,
+    extract_perf_stats,
     get_client,
     is_local,
     json_schema_format,
     parse_json_loose,
     run_concurrent,
 )
+from core.prompts import get_prompt
 
 MAX_CHARS = 4000  # 文本太长会超模型上下文或拖慢速度，超过这个长度就截断
 
@@ -75,7 +81,8 @@ def main():
     def process_row(row):
         doc_path = os.path.join(config.DOCS_DIR, row["filename"])
         text = extract_text(doc_path)
-        doc_type, tags, raw, error = "", [], "", None
+        doc_type, tags, raw, error, perf = "", [], "", None, {}
+        t0 = time.monotonic()
         try:
             resp = call_with_retry(
                 client,
@@ -87,12 +94,14 @@ def main():
                 extra_body=profile.get("extra_body"),
                 response_format=response_format,
             )
+            perf = extract_perf_stats(resp, time.monotonic() - t0)
             raw = resp.choices[0].message.content
             parsed = parse_json_loose(raw)
             doc_type = parsed.get("document_type", "")
             tags = parsed.get("tags", [])
         except Exception as e:  # noqa: BLE001
             error = str(e)
+            perf = {"latency_seconds": round(time.monotonic() - t0, 3)}
 
         return {
             "filename": row["filename"],
@@ -103,6 +112,7 @@ def main():
             "raw_response": raw,
             "error": error,
             "extracted_text_used": text,
+            "perf": perf,
         }
 
     results = run_concurrent(

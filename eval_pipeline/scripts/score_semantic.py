@@ -4,26 +4,30 @@
 不做字符串精确匹配（开放词表模型不该被精确匹配惩罚，理由见 README）。
 
 前提：先跑过
-  python tag_images.py --profile small
-  python tag_images.py --profile reference
+  python scripts/tag_images.py --profile small
+  python scripts/tag_images.py --profile reference
 （documents同理）
 
 依赖较重：pip install sentence-transformers（会带一份 torch）。
 如果不想装这个，可以跳过这一步，只用 llm_judge.py 那条路。
 
-用法：
-  python score_semantic.py --kind images
-  python score_semantic.py --kind documents
+用法（在 eval_pipeline/ 目录下运行）：
+  python scripts/score_semantic.py --kind images
+  python scripts/score_semantic.py --kind documents
 输出：results/semantic_scores_<kind>.csv（逐条明细）+ 终端打印整体均值
 """
 import argparse
 import json
 import os
+import sys
+from pathlib import Path
 
 import pandas as pd
 from sentence_transformers import SentenceTransformer, util
 
-import config
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from core import config
 
 # 多语言轻量embedding模型，中英文标签混在一起也能比较
 MODEL_NAME = "paraphrase-multilingual-MiniLM-L12-v2"

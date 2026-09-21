@@ -10,7 +10,7 @@ import httpx
 from openai import OpenAI
 from tqdm import tqdm
 
-import config
+from . import config
 
 
 def is_local(base_url: str) -> bool:
@@ -114,3 +114,21 @@ def call_with_retry(client: OpenAI, **kwargs):
             if attempt < config.MAX_RETRIES:
                 time.sleep(1.5 * (attempt + 1))
     raise last_err
+
+
+def extract_perf_stats(resp, elapsed_seconds: float) -> dict:
+    """从一次请求里提取资源/性能相关的统计，存进结果jsonl，供 summarize.py 汇总延迟/吞吐量。
+    latency_seconds 是客户端实测的端到端耗时，任何 profile 都有；prompt_tokens/completion_tokens
+    来自标准 usage 字段；tokens_per_second 来自 llama.cpp 专属的 timings 字段（不在 OpenAI 标准里，
+    openai 客户端会把它放进 resp.model_extra，云端模型/不支持的服务端拿不到就是 None，不是bug。"""
+    stats = {"latency_seconds": round(elapsed_seconds, 3)}
+    usage = getattr(resp, "usage", None)
+    if usage:
+        stats["prompt_tokens"] = usage.prompt_tokens
+        stats["completion_tokens"] = usage.completion_tokens
+    timings = (getattr(resp, "model_extra", None) or {}).get("timings")
+    if timings:
+        stats["tokens_per_second"] = timings.get("predicted_per_second")
+        stats["prompt_eval_ms"] = timings.get("prompt_ms")
+        stats["generation_ms"] = timings.get("predicted_ms")
+    return stats

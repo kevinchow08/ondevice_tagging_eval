@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
 """
-给 tagging_test_samples/images 里的图片跑打标签。
+给 tagging_test_samples/images 里的图片跑打标签。在 eval_pipeline/ 目录下运行：
 
 用法：
-  python tag_images.py --profile small                    # 跑你的端侧模型
-  python tag_images.py --profile reference                 # 跑更强的模型，生成参考标签
-  python tag_images.py --profile small --limit 20          # 先跑20张试跑一下流程通不通
-  python tag_images.py --profile small --concurrency 4     # 并发跑（配合服务端 -np 一起调大，见README）
+  python scripts/tag_images.py --profile small                    # 跑你的端侧模型
+  python scripts/tag_images.py --profile reference                 # 跑更强的模型，生成参考标签
+  python scripts/tag_images.py --profile small --limit 20          # 先跑20张试跑一下流程通不通
+  python scripts/tag_images.py --profile small --concurrency 4     # 并发跑（配合服务端 -np 一起调大，见README）
 
 输出：results/images_tags_<profile>.jsonl，每行一个样本的结果。
 """
@@ -14,19 +14,25 @@ import argparse
 import csv
 import json
 import os
+import sys
+import time
+from pathlib import Path
 
-import config
-from prompts import get_prompt
-from tagger_core import (
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from core import config
+from core.client import (
     TAGS_SCHEMA,
     call_with_retry,
     encode_image_b64,
+    extract_perf_stats,
     get_client,
     is_local,
     json_schema_format,
     parse_json_loose,
     run_concurrent,
 )
+from core.prompts import get_prompt
 
 
 def main():
@@ -60,7 +66,8 @@ def main():
 
     def process_row(row):
         img_path = os.path.join(config.IMAGES_DIR, row["filename"])
-        tags, raw, error = [], "", None
+        tags, raw, error, perf = [], "", None, {}
+        t0 = time.monotonic()
         try:
             b64 = encode_image_b64(img_path)
             resp = call_with_retry(
@@ -82,10 +89,12 @@ def main():
                 extra_body=profile.get("extra_body"),
                 response_format=response_format,
             )
+            perf = extract_perf_stats(resp, time.monotonic() - t0)
             raw = resp.choices[0].message.content
             tags = parse_json_loose(raw).get("tags", [])
         except Exception as e:  # noqa: BLE001
             error = str(e)
+            perf = {"latency_seconds": round(time.monotonic() - t0, 3)}
 
         return {
             "filename": row["filename"],
@@ -94,6 +103,7 @@ def main():
             "tags": tags,
             "raw_response": raw,
             "error": error,
+            "perf": perf,
         }
 
     results = run_concurrent(
