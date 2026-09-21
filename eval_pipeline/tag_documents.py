@@ -7,6 +7,7 @@
 用法：
   python tag_documents.py --profile small
   python tag_documents.py --profile reference
+  python tag_documents.py --profile small --concurrency 4   # 并发跑，见README
 
 输出：results/docs_tags_<profile>.jsonl
 """
@@ -16,11 +17,18 @@ import json
 import os
 
 import pdfplumber
-from tqdm import tqdm
 
 import config
 from prompts import DOCUMENT_TAGGING_PROMPT
-from tagger_core import call_with_retry, get_client, parse_json_loose
+from tagger_core import (
+    DOCUMENT_TAGS_SCHEMA,
+    call_with_retry,
+    get_client,
+    is_local,
+    json_schema_format,
+    parse_json_loose,
+    run_concurrent,
+)
 
 MAX_CHARS = 4000  # 文本太长会超模型上下文或拖慢速度，超过这个长度就截断
 
@@ -37,10 +45,19 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--profile", choices=list(config.MODEL_PROFILES.keys()), required=True)
     ap.add_argument("--limit", type=int, default=None)
+    ap.add_argument(
+        "--concurrency", type=int, default=1,
+        help="并发请求数，默认1（顺序执行）。加大之前记得服务端 -np/-c 也要同步调大，见README",
+    )
     args = ap.parse_args()
 
     profile = config.MODEL_PROFILES[args.profile]
     client = get_client(profile)
+    response_format = (
+        json_schema_format("document_tags", DOCUMENT_TAGS_SCHEMA)
+        if is_local(profile["base_url"])
+        else None
+    )
 
     os.makedirs(config.RESULTS_DIR, exist_ok=True)
     out_path = os.path.join(config.RESULTS_DIR, f"docs_tags_{args.profile}.jsonl")
@@ -50,46 +67,47 @@ def main():
     if args.limit:
         rows = rows[: args.limit]
 
-    n_error = 0
-    with open(out_path, "w", encoding="utf-8") as out:
-        for row in tqdm(rows, desc=f"tagging documents [{args.profile}]"):
-            doc_path = os.path.join(config.DOCS_DIR, row["filename"])
-            text = extract_text(doc_path)
-            doc_type, tags, raw, error = "", [], "", None
-            try:
-                resp = call_with_retry(
-                    client,
-                    model=profile["model"],
-                    messages=[
-                        {"role": "user", "content": DOCUMENT_TAGGING_PROMPT.format(document_text=text)}
-                    ],
-                    max_tokens=500,
-                    extra_body=profile.get("extra_body"),
-                )
-                raw = resp.choices[0].message.content
-                parsed = parse_json_loose(raw)
-                doc_type = parsed.get("document_type", "")
-                tags = parsed.get("tags", [])
-            except Exception as e:  # noqa: BLE001
-                error = str(e)
-                n_error += 1
-
-            out.write(
-                json.dumps(
-                    {
-                        "filename": row["filename"],
-                        "reference_type_cn": row["document_type_cn"],
-                        "model_profile": args.profile,
-                        "document_type": doc_type,
-                        "tags": tags,
-                        "raw_response": raw,
-                        "error": error,
-                        "extracted_text_used": text,
-                    },
-                    ensure_ascii=False,
-                )
-                + "\n"
+    def process_row(row):
+        doc_path = os.path.join(config.DOCS_DIR, row["filename"])
+        text = extract_text(doc_path)
+        doc_type, tags, raw, error = "", [], "", None
+        try:
+            resp = call_with_retry(
+                client,
+                model=profile["model"],
+                messages=[
+                    {"role": "user", "content": DOCUMENT_TAGGING_PROMPT.format(document_text=text)}
+                ],
+                max_tokens=500,
+                extra_body=profile.get("extra_body"),
+                response_format=response_format,
             )
+            raw = resp.choices[0].message.content
+            parsed = parse_json_loose(raw)
+            doc_type = parsed.get("document_type", "")
+            tags = parsed.get("tags", [])
+        except Exception as e:  # noqa: BLE001
+            error = str(e)
+
+        return {
+            "filename": row["filename"],
+            "reference_type_cn": row["document_type_cn"],
+            "model_profile": args.profile,
+            "document_type": doc_type,
+            "tags": tags,
+            "raw_response": raw,
+            "error": error,
+            "extracted_text_used": text,
+        }
+
+    results = run_concurrent(
+        rows, process_row, args.concurrency, desc=f"tagging documents [{args.profile}]"
+    )
+    n_error = sum(1 for r in results if r["error"])
+
+    with open(out_path, "w", encoding="utf-8") as out:
+        for r in results:
+            out.write(json.dumps(r, ensure_ascii=False) + "\n")
 
     print(f"完成，共 {len(rows)} 条，{n_error} 条出错。写入 {out_path}")
 

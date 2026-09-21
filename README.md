@@ -63,15 +63,25 @@ llama-server \
   --port 8080 \
   -c 16384 \
   -np 1 \
-  --reasoning off
+  --reasoning off \
+  --temp 0.3 \
+  --repeat-penalty 1.15
 ```
 
 几个容易踩的坑，提前说明：
-- `-np`（并发槽数）会把 `-c`（总 context）平分给每个槽。比如 `-c 65536 -np 16`，每个请求实际能用的 context 只有 4096，很容易在图片/长文档场景下不够用导致截断。本工具的调用是顺序请求，`-np 1` 就够，把 `-c` 全部留给单个请求。
+- `-np`（并发槽数）会把 `-c`（总 context）平分给每个槽。比如 `-c 65536 -np 16`，每个请求实际能用的 context 只有 4096，很容易在图片/长文档场景下不够用导致截断。脚本默认是顺序请求，`-np 1` 就够，把 `-c` 全部留给单个请求；**只有配合下面"并发跑"那节把客户端也改成并发发请求，调大 `-np` 才有意义**——单开 `-np` 不改客户端，多出来的槽位只是空转，不会变快。
 - 会思考（reasoning）的模型建议用 `--reasoning off` 关掉思考模式：打标签是结构化 JSON 输出任务，不需要思考过程，开着思考容易把 `max_tokens` 预算耗在 `reasoning_content` 上，甚至偶尔陷入重复生成的死循环。
+- **采样参数**：`llama-server` 默认 `--temp 0.80`、`--repeat-penalty 1.00`（=不惩罚重复）。打标签这类结构化抽取任务不需要高随机性，默认参数实测会出现"同一个标签复读好几遍直到把 token 预算耗光"的退化情况（比如标签列表变成 `["鸟","鸟","鸟",...]`，或者更极端的直接把 JSON 挤爆导致解析失败）。把 `--temp` 降到 0.2~0.4、`--repeat-penalty` 调到 1.1~1.2，能明显缓解。
+- **结构化输出（JSON Schema）**：如果服务端支持 OpenAI 兼容的 `response_format: {"type": "json_schema", ...}`（`llama.cpp` 较新版本支持，用 `-j/--json-schema` 或请求里带 `response_format` 都行），`tag_images.py`/`tag_documents.py` 会自动对本地模型请求加上 schema 约束（`eval_pipeline/tagger_core.py` 里的 `TAGS_SCHEMA`/`DOCUMENT_TAGS_SCHEMA`），从语法层面保证输出一定是合法 JSON、标签数组长度受控，配合 `uniqueItems: true` 还能杜绝同一个标签被逐字重复。这个只在检测到本地地址（`localhost`/`127.0.0.1`）时启用，云端裁判模型的兼容性没验证过，不强行加。
 - 如果系统配了 `HTTP_PROXY` / `HTTPS_PROXY` 环境变量，注意别让本地服务的请求被代理误伤（`tagger_core.py` 已经对 `localhost`/`127.0.0.1` 的 client 做了 `trust_env=False` 处理，绕开代理）。
 
-4）改 `eval_pipeline/config.py` 里的 `MODEL_PROFILES`：`small` 填被测模型的 endpoint，`reference` 填裁判/参考模型的 endpoint（云端 API 或本地另起的更大模型都行）。**注意 `config.py` 里不要提交真实的 API key**，发布前检查一下有没有漏改。
+4）配置模型端点：`eval_pipeline/config.py` 里 `small`（被测模型）的 `base_url`/`model` 一般不用改；`reference`（裁判/参考模型）的 `base_url`/`api_key`/`model` 从环境变量读取，不写在 `config.py` 里。把 `eval_pipeline/.env.example` 复制成 `eval_pipeline/.env`（已在 `.gitignore` 里，不会被提交），填入你自己的真实值：
+
+```bash
+cd eval_pipeline
+cp .env.example .env
+# 编辑 .env，填入 REFERENCE_API_KEY 等
+```
 
 5）先小规模跑通
 
@@ -80,6 +90,28 @@ python tag_images.py --profile small --limit 5
 python tag_documents.py --profile small --limit 2
 ```
 检查 `results/*.jsonl` 里每行 `error` 是不是 `null`，`tags` 有没有实际内容。
+
+### 并发跑（样本量大、覆盖率跑得慢的时候再用）
+
+默认所有脚本都是顺序请求（一条接一条），样本量不大时（几百条以内）够用。样本量上到几千条，可以开并发，但**服务端和客户端要同时改，缺一不可**：
+
+1. 服务端 `-np` 调大，`-c` 要跟着等比例放大，保证单个请求的 context 不缩水（比如单槽 `-c 16384` 够用，开4个槽位并发就要 `-c 65536`）：
+```bash
+llama-server \
+  -m <你的模型.gguf> \
+  --mmproj <对应的mmproj.gguf> \
+  --port 8080 \
+  -c 65536 \
+  -np 4 \
+  --reasoning off \
+  --temp 0.3 \
+  --repeat-penalty 1.15
+```
+2. 客户端加 `--concurrency N`（`tag_images.py`/`tag_documents.py`/`llm_judge.py` 都支持，默认1即顺序执行，行为不变），`N` 跟服务端 `-np` 对齐：
+```bash
+python tag_images.py --profile small --concurrency 4
+```
+`llm_judge.py` 走的是付费云端API，并发数建议从小往大试（比如先2再4），避免撞到服务商的限速/并发上限导致大量请求失败重试，反而更慢更费钱。
 
 6）跑全量 + 裁判评审 + 汇总
 
@@ -171,15 +203,25 @@ llama-server \
   --port 8080 \
   -c 16384 \
   -np 1 \
-  --reasoning off
+  --reasoning off \
+  --temp 0.3 \
+  --repeat-penalty 1.15
 ```
 
 A few gotchas worth knowing up front:
-- `-np` (parallel slots) divides the total `-c` (context) evenly across slots. E.g. `-c 65536 -np 16` leaves only 4096 tokens per request — easy to blow through with an image or a long document, causing truncation. This toolkit sends requests sequentially, so `-np 1` is enough — give the full context to a single request.
+- `-np` (parallel slots) divides the total `-c` (context) evenly across slots. E.g. `-c 65536 -np 16` leaves only 4096 tokens per request — easy to blow through with an image or a long document, causing truncation. Scripts default to sequential requests, so `-np 1` is enough — give the full context to a single request. **Raising `-np` only pays off if you also switch the client to concurrent requests (see "Running concurrently" below)** — otherwise the extra slots just sit idle.
 - For reasoning-capable models, `--reasoning off` is recommended: tagging is a structured JSON output task that doesn't need a chain of thought, and leaving it on can burn the `max_tokens` budget on `reasoning_content` — occasionally the model even gets stuck in a repetitive generation loop.
+- **Sampling parameters**: `llama-server` defaults to `--temp 0.80` and `--repeat-penalty 1.00` (i.e. no repetition penalty at all). A structured extraction task like tagging doesn't need much randomness, and the defaults measurably produce degenerate output — the same tag repeated until the token budget runs out (e.g. a tag list collapsing into `["bird","bird","bird",...]`), or in worse cases blowing past the JSON entirely and failing to parse. Dropping `--temp` to 0.2–0.4 and raising `--repeat-penalty` to 1.1–1.2 clearly helps.
+- **Structured output (JSON Schema)**: if the server supports the OpenAI-compatible `response_format: {"type": "json_schema", ...}` (recent `llama.cpp` builds do, via `-j/--json-schema` or a `response_format` in the request), `tag_images.py`/`tag_documents.py` automatically attach a schema (`TAGS_SCHEMA`/`DOCUMENT_TAGS_SCHEMA` in `eval_pipeline/tagger_core.py`) to requests sent to a local model. This grammar-constrains generation so the output is guaranteed valid JSON with a bounded tag array, and `uniqueItems: true` rules out the exact-duplicate-tag failure mode at the syntax level. It's only enabled when the endpoint is detected as local (`localhost`/`127.0.0.1`) — compatibility with cloud judge models hasn't been verified, so it's not forced there.
 - If `HTTP_PROXY` / `HTTPS_PROXY` are set system-wide, make sure requests to your local server aren't accidentally routed through the proxy (`tagger_core.py` already forces `trust_env=False` for `localhost`/`127.0.0.1` clients to sidestep this).
 
-4) Edit `MODEL_PROFILES` in `eval_pipeline/config.py`: `small` is the candidate model's endpoint, `reference` is the judge/reference model's endpoint (a cloud API or a bigger local model both work). **Don't commit a real API key in `config.py`** — double-check before publishing.
+4) Configure model endpoints: `small` (the candidate model) in `eval_pipeline/config.py` usually needs no changes. `reference` (the judge/reference model)'s `base_url`/`api_key`/`model` are read from environment variables instead of being written into `config.py`. Copy `eval_pipeline/.env.example` to `eval_pipeline/.env` (already in `.gitignore`, never committed) and fill in your real values:
+
+```bash
+cd eval_pipeline
+cp .env.example .env
+# edit .env, fill in REFERENCE_API_KEY etc.
+```
 
 5) Smoke-test on a small sample
 
@@ -188,6 +230,28 @@ python tag_images.py --profile small --limit 5
 python tag_documents.py --profile small --limit 2
 ```
 Check that every row in `results/*.jsonl` has `error: null` and non-empty `tags`.
+
+### Running concurrently (once your sample count grows and sequential runs feel slow)
+
+All scripts default to sequential requests (one at a time), which is fine for a few hundred samples. Once you're into the thousands, you can go concurrent — **both the server and the client need to change together**:
+
+1. Raise `-np` on the server, and scale `-c` proportionally so a single request's context doesn't shrink (e.g. if one slot needs `-c 16384`, 4 concurrent slots need `-c 65536`):
+```bash
+llama-server \
+  -m <your-model.gguf> \
+  --mmproj <matching-mmproj.gguf> \
+  --port 8080 \
+  -c 65536 \
+  -np 4 \
+  --reasoning off \
+  --temp 0.3 \
+  --repeat-penalty 1.15
+```
+2. Add `--concurrency N` on the client side (`tag_images.py`/`tag_documents.py`/`llm_judge.py` all support it, defaulting to 1 = sequential, unchanged behavior), matching the server's `-np`:
+```bash
+python tag_images.py --profile small --concurrency 4
+```
+`llm_judge.py` hits a paid cloud API — ramp concurrency up gradually (try 2, then 4) rather than jumping straight to a high number, to avoid tripping the provider's rate/concurrency limits, which just causes retries and ends up slower and more expensive.
 
 6) Run the full batch + judge + summary
 
