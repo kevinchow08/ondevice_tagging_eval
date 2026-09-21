@@ -19,7 +19,7 @@ import os
 import pdfplumber
 
 import config
-from prompts import DOCUMENT_TAGGING_PROMPT
+from prompts import get_prompt
 from tagger_core import (
     DOCUMENT_TAGS_SCHEMA,
     call_with_retry,
@@ -49,10 +49,14 @@ def main():
         "--concurrency", type=int, default=1,
         help="并发请求数，默认1（顺序执行）。加大之前记得服务端 -np/-c 也要同步调大，见README",
     )
+    ap.add_argument(
+        "--lang", choices=["zh", "en"], default="zh", help="prompt 语言，默认中文",
+    )
     args = ap.parse_args()
 
     profile = config.MODEL_PROFILES[args.profile]
     client = get_client(profile)
+    prompt_template = get_prompt("document_tagging", args.lang)
     response_format = (
         json_schema_format("document_tags", DOCUMENT_TAGS_SCHEMA)
         if is_local(profile["base_url"])
@@ -60,7 +64,8 @@ def main():
     )
 
     os.makedirs(config.RESULTS_DIR, exist_ok=True)
-    out_path = os.path.join(config.RESULTS_DIR, f"docs_tags_{args.profile}.jsonl")
+    lang_suffix = "" if args.lang == "zh" else f"_{args.lang}"
+    out_path = os.path.join(config.RESULTS_DIR, f"docs_tags_{args.profile}{lang_suffix}.jsonl")
 
     with open(config.DOCS_MANIFEST, newline="", encoding="utf-8") as f:
         rows = list(csv.DictReader(f))
@@ -76,7 +81,7 @@ def main():
                 client,
                 model=profile["model"],
                 messages=[
-                    {"role": "user", "content": DOCUMENT_TAGGING_PROMPT.format(document_text=text)}
+                    {"role": "user", "content": prompt_template.format(document_text=text)}
                 ],
                 max_tokens=500,
                 extra_body=profile.get("extra_body"),

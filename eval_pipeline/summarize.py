@@ -26,16 +26,29 @@ def summarize_judge(rows, label):
         return f"### {label}\n（没有找到 LLM 裁判评审结果，跳过。先跑 llm_judge.py）\n"
 
     scored = [r for r in rows if r.get("verdict") and r["verdict"].get("accuracy_score") is not None]
-    avg_score = sum(r["verdict"]["accuracy_score"] for r in scored) / len(scored) if scored else None
-    hallucinated_total = sum(len(r["verdict"].get("hallucinated_tags", [])) for r in rows if r.get("verdict"))
-    missing_total = sum(len(r["verdict"].get("missing_important_tags", [])) for r in rows if r.get("verdict"))
+    n = len(scored)
+    avg_score = sum(r["verdict"]["accuracy_score"] for r in scored) / n if n else None
 
     lines = [f"### {label}", f"- 样本数：{len(rows)}"]
     lines.append(
         f"- 平均准确度打分：{avg_score:.3f}" if avg_score is not None else "- 平均准确度打分：无有效数据"
     )
-    lines.append(f"- 累计瞎编标签数：{hallucinated_total}")
-    lines.append(f"- 累计漏打重要标签数：{missing_total}")
+    # accuracy_score 均值是唯一样本量无关、能跨批次比较的数字。下面瞎编/漏打改成"受影响样本占比"+
+    # "平均每条个数"，累计总数不再当 headline 展示——总数会随样本量线性增长，不同批次之间不可比，
+    # 而且标签给得越少总数天然越好看，跟真实质量没有必然关系。
+    if n:
+        halluc_counts = [len(r["verdict"].get("hallucinated_tags", [])) for r in scored]
+        missing_counts = [len(r["verdict"].get("missing_important_tags", [])) for r in scored]
+        n_halluc = sum(1 for c in halluc_counts if c > 0)
+        n_missing = sum(1 for c in missing_counts if c > 0)
+        lines.append(
+            f"- 瞎编：{n_halluc}/{n} 条样本（{n_halluc/n:.0%}）至少有1个瞎编标签，"
+            f"平均每条 {sum(halluc_counts)/n:.2f} 个"
+        )
+        lines.append(
+            f"- 漏打：{n_missing}/{n} 条样本（{n_missing/n:.0%}）至少漏打1个重要标签，"
+            f"平均每条 {sum(missing_counts)/n:.2f} 个"
+        )
 
     worst = sorted(scored, key=lambda r: r["verdict"]["accuracy_score"])[:5]
     if worst:

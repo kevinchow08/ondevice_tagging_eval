@@ -16,7 +16,7 @@ import json
 import os
 
 import config
-from prompts import IMAGE_TAGGING_PROMPT
+from prompts import get_prompt
 from tagger_core import (
     TAGS_SCHEMA,
     call_with_retry,
@@ -37,16 +37,21 @@ def main():
         "--concurrency", type=int, default=1,
         help="并发请求数，默认1（顺序执行）。加大之前记得服务端 -np/-c 也要同步调大，见README",
     )
+    ap.add_argument(
+        "--lang", choices=["zh", "en"], default="zh", help="prompt 语言，默认中文",
+    )
     args = ap.parse_args()
 
     profile = config.MODEL_PROFILES[args.profile]
     client = get_client(profile)
+    prompt_text = get_prompt("image_tagging", args.lang)
     response_format = (
         json_schema_format("image_tags", TAGS_SCHEMA) if is_local(profile["base_url"]) else None
     )
 
     os.makedirs(config.RESULTS_DIR, exist_ok=True)
-    out_path = os.path.join(config.RESULTS_DIR, f"images_tags_{args.profile}.jsonl")
+    lang_suffix = "" if args.lang == "zh" else f"_{args.lang}"
+    out_path = os.path.join(config.RESULTS_DIR, f"images_tags_{args.profile}{lang_suffix}.jsonl")
 
     with open(config.IMAGES_MANIFEST, newline="", encoding="utf-8") as f:
         rows = list(csv.DictReader(f))
@@ -65,7 +70,7 @@ def main():
                     {
                         "role": "user",
                         "content": [
-                            {"type": "text", "text": IMAGE_TAGGING_PROMPT},
+                            {"type": "text", "text": prompt_text},
                             {
                                 "type": "image_url",
                                 "image_url": {"url": f"data:image/jpeg;base64,{b64}"},
