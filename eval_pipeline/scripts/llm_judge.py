@@ -60,6 +60,7 @@ def judge_images(client, profile, limit, concurrency, lang):
                     }
                 ],
                 max_tokens=500,
+                temperature=0,
                 extra_body=profile.get("extra_body"),
             )
             verdict = parse_json_loose(resp.choices[0].message.content)
@@ -101,6 +102,7 @@ def judge_documents(client, profile, limit, concurrency, lang):
                 client, model=profile["model"],
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=500,
+                temperature=0,
                 extra_body=profile.get("extra_body"),
             )
             verdict = parse_json_loose(resp.choices[0].message.content)
