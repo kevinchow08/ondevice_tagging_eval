@@ -31,7 +31,8 @@
 │   │   ├── tag_documents.py  # 给 PDF 文档打标签（先用 pdfplumber 抽文本）
 │   │   ├── llm_judge.py      # LLM 裁判评审
 │   │   ├── score_semantic.py # 语义相似度打分（可选）
-│   │   └── summarize.py      # 汇总成 results/summary_report.md
+│   │   ├── build_calibration_sample.py # 导出人工校准抽样表
+│   │   └── summarize.py      # 汇总成 results/summary_report.md（含分级判定）
 │   ├── Makefile               # 常用命令的简写，见下面"快速开始"
 │   ├── requirements.txt
 │   ├── .env.example           # 环境变量模板，复制成 .env 填真实值
@@ -147,12 +148,22 @@ python scripts/llm_judge.py --kind images     # 抽查结果OK了，再补跑剩
 python scripts/summarize.py
 ```
 
-7）看 `results/summary_report.md`
+7）看 `results/summary_report.md`——最上面"结论速览"会给图片/文档各一个分级判定（🟢可用/🟡有条件可用/🔴不建议直接使用，阈值在 `core/config.py` 的 `QUALITY_GATE` 里，按你的风险容忍度自己调），以及人工校准做没做的状态。
+
+8）（推荐，尤其是要把结论当真的时候）人工校准裁判靠不靠谱：
+
+```bash
+python scripts/build_calibration_sample.py --kind images --n 30   # 分层抽样，大部分抽"候选输了"的样本
+python scripts/build_calibration_sample.py --kind documents        # 文档样本少，全审
+```
+打开生成的 `results/calibration_images.csv`/`calibration_documents.csv`，对着 `path_hint` 指向的原图/原文，在 `human_agree` 列填"同意/不同意/不确定"，填完重新跑 `python scripts/summarize.py`。
+
+**人工校准不是摆设，是真的有否决权**：校准填的条数不够 `CALIBRATION_MIN_N`（默认10条，在 `core/config.py` 里）时，"结论速览"显示"⚪ 结论可信度未知"，不会摆出一个confident的颜色；条数够了但一致率低于 `CALIBRATION_TRUST_THRESHOLD`（默认70%）时，显示"❓ 裁判可信度不达标，判定不采信"——说明裁判本身系统性不可靠，瞎编率/漏打率这些数字很可能是裁判编出来的，得先去看分歧在哪、把裁判改好再重新校准；只有条数够、一致率也够，才会正常显示带颜色的分级判定，并标注"判定可信"。
 
 ### 局限性（诚实说明，别拿这个当权威 benchmark）
 
-- **裁判没做过人工校准**：裁判现在是两两对比（候选 vs 参考模型独立打的标签），比早期的绝对打分更可靠（[MT-Bench](https://arxiv.org/abs/2306.05685) 论文的结论），请求也把 `temperature` 锁到了 0（降低同一批内容重跑时判断漂移的概率）。但这些都只是减少"裁判自己不稳定"这类误差，**没有验证过裁判的判断本身准不准**——没有拿人工判断去校准过。MT-Bench 论文的建议是找 30~50 条样本人工标注、算裁判和人的一致率，这一步我们还没做。
-- **样本量有限**：默认自带的测试图片是 ImageNet 风格的单目标自然图，文档样本只有 6 份——n 都不大，结论只能当方向性参考，别当成统计意义上的定论。
+- **裁判默认没做过人工校准**：裁判现在是两两对比（候选 vs 参考模型独立打的标签），比早期的绝对打分更可靠（[MT-Bench](https://arxiv.org/abs/2306.05685) 论文的结论），请求也把 `temperature` 锁到了 0（降低同一批内容重跑时判断漂移的概率）。但这些都只是减少"裁判自己不稳定"这类误差，**不代表裁判的判断本身准不准已经验证过**——`build_calibration_sample.py` 把 MT-Bench 论文"30~50条人工标注算一致率"这个方法做成了工具，但默认没人替你跑这一步，报告里"结论速览"会如实标注"未做"，不会假装已经验证过。
+- **样本量有限**：默认自带的测试图片是 ImageNet 风格的单目标自然图，文档样本有 18 份（覆盖14种常见文档类型）——比最早的6份好一些，但 n 依然不大，结论只能当方向性参考，别当成统计意义上的定论。
 - **裁判模型自己也会犯错，"参考模型"也不是ground truth**：裁判和拿来对比的参考模型都可能犯同样的错（比如两边都把某种昆虫认错成同一个错误类别），纯两两对比看不出这种共享盲区，只有真正回看原图/原文才能发现——这也是为什么瞎编/漏打这两个指标是裁判直接核对原始内容得出的，不是靠对比算出来的。有 `reference_label_en`/`document_type_cn` 这个可选的弱参考字段时，裁判会额外用它核对，能缓解一部分这个问题，但不是每条样本都保证有这个字段，缓解不代表消除。
 - **开放词表打标签这个场景，没有能直接照搬的现成评估基准**：图像描述里常用的 CHAIR/POPE 之类的成熟指标，本质上还是依赖每张图片预先标注好的固定物体列表做核对；我们这里没有固定标签集（图片/文档集合可以自由扩充），只是借用了 CHAIR 的计数方式（瞎编率算法），验证的判断来源换成了"更强模型直接看图裁决"，这个组合本身没有被哪篇论文直接验证过，需要靠上面说的人工校准去补上这一环。
 - **依赖云端商业模型做基准的话可复现性打折扣**：商业模型的权重可能被服务商静默更新，同一个 model id 不同时间的表现未必一致，建议在报告里记录清楚用的是哪个模型快照/哪一天跑的。
@@ -192,7 +203,8 @@ Either path can be used alone, or both — [summarize.py](eval_pipeline/scripts/
 │   │   ├── tag_documents.py  # tag PDF documents (text extracted via pdfplumber)
 │   │   ├── llm_judge.py      # LLM-as-judge evaluation
 │   │   ├── score_semantic.py # semantic similarity scoring (optional)
-│   │   └── summarize.py      # aggregates into results/summary_report.md
+│   │   ├── build_calibration_sample.py # exports a human-calibration sample sheet
+│   │   └── summarize.py      # aggregates into results/summary_report.md (incl. the graded verdict)
 │   ├── Makefile               # shortcuts for common commands, see "Quickstart" below
 │   ├── requirements.txt
 │   ├── .env.example           # env var template, copy to .env and fill in real values
@@ -308,12 +320,22 @@ python scripts/llm_judge.py --kind images     # once the sample looks good, run 
 python scripts/summarize.py
 ```
 
-7. Read `results/summary_report.md`
+7. Read `results/summary_report.md` — the "Headline" section at the top gives images/documents each a grade (🟢 usable / 🟡 usable with conditions / 🔴 not recommended as-is; thresholds live in `QUALITY_GATE` in `core/config.py`, tune them to your own risk tolerance), plus whether human calibration has been done.
+
+8. (Recommended, especially before treating the conclusion as final) Calibrate the judge against a human:
+
+```bash
+python scripts/build_calibration_sample.py --kind images --n 30   # stratified sample, mostly candidate-lost cases
+python scripts/build_calibration_sample.py --kind documents        # few documents, review all of them
+```
+Open the generated `results/calibration_images.csv`/`calibration_documents.csv`, check each one against the original image/text at `path_hint`, and fill in "agree"/"disagree"/"unsure" in the `human_agree` column. Re-run `python scripts/summarize.py`.
+
+**Calibration isn't decorative — it can actually veto the grade.** If fewer than `CALIBRATION_MIN_N` rows (default 10, in `core/config.py`) are filled in, the headline shows "⚪ verdict confidence unknown" instead of a confident-looking color. If enough rows are filled but the agreement rate is below `CALIBRATION_TRUST_THRESHOLD` (default 70%), it shows "❓ judge reliability doesn't meet the bar, verdict not trusted" — meaning the judge itself is likely systematically unreliable, so the hallucination/missing numbers may well be the judge's own invention; go look at where the disagreements are, fix the judge, and recalibrate. Only when there's enough calibration data AND high agreement does the colored grade show normally, marked as "trusted".
 
 ### Limitations (stated honestly — don't treat this as an authoritative benchmark)
 
-- **The judge hasn't been calibrated against humans**: it now runs pairwise (candidate vs. the reference model's independently-generated tags) rather than absolute scoring, which is more reliable per the [MT-Bench paper](https://arxiv.org/abs/2306.05685)'s findings, and requests pin `temperature` to 0 (reducing drift when re-running the same batch). But both only reduce "the judge being unstable" — **there's still no check that the judge's actual judgment is correct**, since it hasn't been validated against human ratings. MT-Bench's own recommendation is a 30-50 example human-annotated calibration set to measure judge-human agreement; we haven't done that step yet.
-- **Sample sizes are small**: the bundled test images are single-subject, ImageNet-style natural photos, and there are only 6 document samples — treat conclusions as directional, not statistically definitive.
+- **The judge isn't calibrated against humans by default**: it now runs pairwise (candidate vs. the reference model's independently-generated tags) rather than absolute scoring, which is more reliable per the [MT-Bench paper](https://arxiv.org/abs/2306.05685)'s findings, and requests pin `temperature` to 0 (reducing drift when re-running the same batch). But both only reduce "the judge being unstable" — **that's not the same as verifying the judge's actual judgment is correct**. `build_calibration_sample.py` turns MT-Bench's "30-50 human-annotated examples, measure agreement" recommendation into a tool, but nobody runs that step for you by default — the report's headline section honestly labels it "not done" rather than pretending it's been validated.
+- **Sample sizes are small**: the bundled test images are single-subject, ImageNet-style natural photos, and there are 18 document samples (spanning 14 common document types) — better than the original 6, but still not a lot — treat conclusions as directional, not statistically definitive.
 - **The judge model can itself be wrong, and so can the "reference" model**: the judge and the reference model it compares against can share the same blind spot (e.g. both misclassify the same insect the same wrong way), which a pairwise comparison alone won't catch — only checking against the actual image/text catches that. That's why hallucination/missing-tag counts are derived from the judge directly checking the source content, not from the pairwise comparison itself. When the optional `reference_label_en`/`document_type_cn` field is present, the judge uses it as an extra check, which helps — but it's not guaranteed on every sample, so this mitigates the risk rather than eliminating it.
 - **There's no off-the-shelf benchmark for truly open-vocabulary tagging**: established image-captioning hallucination metrics like CHAIR/POPE still rely on a fixed, pre-annotated object list per image; we have no fixed label set (the image/document collection is meant to be freely extensible), so we borrowed CHAIR's counting formula but swapped in "a stronger model judges directly from the image" as the source of truth — that specific combination hasn't been validated by any single published benchmark, which is exactly why the human-calibration step above matters.
 - **Reproducibility is limited when the reference is a commercial cloud model**: providers can silently update model weights behind a stable model id, so results from the same id may drift over time — record which model snapshot and date you ran against.

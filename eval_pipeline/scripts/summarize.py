@@ -6,6 +6,7 @@
 用法（在 eval_pipeline/ 目录下运行）：python scripts/summarize.py
 输出：results/summary_report.md
 """
+import csv
 import json
 import os
 import sys
@@ -60,6 +61,81 @@ def judge_stats(rows):
         "avg_missing_per_sample": sum(missing_counts) / n,
         "worst": losses[:5],
     }
+
+
+def grade(stats):
+    """瞎编率(CHAIR_s)/漏打率哪个落在更差的档位，就用哪个定级（短板原则）。
+    阈值来自 config.QUALITY_GATE，写死但可调，不是AI临场判断——改config里的数字就能调松紧。
+    这只是把已有数字翻译成一句人话结论，不产生新信息，可信度完全取决于这些数字本身准不准，
+    所以报告里这句话必须跟着"有没有做过人工校准"这个状态一起看，见 load_calibration()。"""
+    gate = config.QUALITY_GATE
+    halluc, missing = stats["halluc_rate"], stats["missing_rate"]
+
+    def band(rate, green_max, yellow_max):
+        if rate <= green_max:
+            return 0
+        if rate <= yellow_max:
+            return 1
+        return 2
+
+    level = max(
+        band(halluc, gate["green_halluc"], gate["yellow_halluc"]),
+        band(missing, gate["green_missing"], gate["yellow_missing"]),
+    )
+    label = ["🟢 可用", "🟡 有条件可用（建议配合人工审核）", "🔴 不建议直接使用"][level]
+    reason = f"瞎编率{halluc:.0%}、漏打率{missing:.0%}，取较差档"
+    return label, reason
+
+
+def load_calibration(csv_path):
+    """读人工填好的校准CSV（build_calibration_sample.py 生成、你自己填过 human_agree 那列的），
+    算"人工-裁判一致率"。没有文件、或者一条都没填，返回 None——报告上就显示"未校准"。"""
+    if not os.path.exists(csv_path):
+        return None
+    with open(csv_path, newline="", encoding="utf-8-sig") as f:
+        rows = list(csv.DictReader(f))
+    judged = [r for r in rows if (r.get("human_agree") or "").strip()]
+    if not judged:
+        return None
+    agree_words = {"同意", "agree", "yes", "y", "是", "对"}
+    n_agree = sum(1 for r in judged if r["human_agree"].strip().lower() in agree_words)
+    return {"n_total": len(rows), "n_judged": len(judged), "agree_rate": n_agree / len(judged)}
+
+
+def summarize_headline(label, stats, calibration):
+    """报告最上面的"结论速览"：分级判定 + 校准状态。放在最前面是因为这是大多数人真正想先看到
+    的东西，下面第一、二、三、四节的详细数字是支撑这句结论的证据，不是反过来。
+
+    人工校准在这里不是摆设——校准结果不够格（没做/条数太少/一致率太低），分级判定就不会
+    以一个confident的颜色呈现，而是明确说"不采信"。不然的话，不管你校准填得多认真、结果多差，
+    颜色永远只看 grade() 算出来的瞎编率/漏打率，校准就成了挂在旁边的装饰数字，没有否决权。"""
+    if not stats:
+        return f"- **{label}**：无有效裁判数据，跳过\n"
+    level_label, reason = grade(stats)
+
+    if not calibration or calibration["n_judged"] < config.CALIBRATION_MIN_N:
+        need = config.CALIBRATION_MIN_N
+        got = calibration["n_judged"] if calibration else 0
+        return (
+            f"- **{label}**：⚪ 结论可信度未知（裁判自己报的是「{level_label}，{reason}」，"
+            f"但人工校准只有{got}条，不够{need}条的最低要求，这个数字本身没有统计意义）——"
+            f"建议先跑 `build_calibration_sample.py` 补够样本再看这个结论\n"
+        )
+
+    if calibration["agree_rate"] < config.CALIBRATION_TRUST_THRESHOLD:
+        return (
+            f"- **{label}**：❓ 裁判可信度不达标，上面的判定**不采信**（人工校准{calibration['n_judged']}条，"
+            f"一致率仅{calibration['agree_rate']:.0%}，低于{config.CALIBRATION_TRUST_THRESHOLD:.0%}的采信门槛）——"
+            f"裁判自己报的是「{level_label}，{reason}」，但校准显示裁判本身可能系统性判断错误，"
+            f"这个数字很可能是裁判编出来的，建议先去看校准表里「不同意」的那些具体分歧在哪，"
+            f"把裁判prompt改好、重新校准过关，再重新出结论\n"
+        )
+
+    return (
+        f"- **{label}**：{level_label}（{reason}）；"
+        f"人工校准：已做，抽查{calibration['n_judged']}条，一致率{calibration['agree_rate']:.0%}"
+        f"（≥{config.CALIBRATION_TRUST_THRESHOLD:.0%}采信门槛，判定可信）\n"
+    )
 
 
 def summarize_judge(rows, label):
@@ -186,8 +262,8 @@ def build_conclusion(image_stats, doc_stats):
         "1. 当前图片评审只抽了一部分样本，文档样本量更小（个位数）——正式上线前建议扩大到全量或"
         "更接近真实业务分布的数据集，再看这些比例是否稳定；\n"
         "2. 裁判请求已经把 temperature 锁到 0，同一批内容重跑分数漂移的概率降低了，但没消除"
-        "\"裁判自己判断错\"这类误差——重要决策前建议做一次人工抽查校准（对着原图/原文，抽30~50条"
-        "看你自己是否同意裁判的 winner/瞎编/漏打判断，算一个人工-裁判一致率）；\n"
+        "\"裁判自己判断错\"这类误差——最上面\"结论速览\"里如果显示\"人工校准：未做\"，"
+        "说明现在的分级判定还没被验证过，建议先跑 `build_calibration_sample.py` 抽查确认；\n"
         "3. 看清楚失败模式是不是你业务场景真正关心的——比如图片“大类生物学分类错误”对“相册自动分类”"
         "场景可能无关痛痒，对“物种识别”类场景就是致命的；\n"
         "4. 结合下面的性能数据判断延迟能不能接受，标得准但跑不动同样不算达标。"
@@ -198,9 +274,25 @@ def build_conclusion(image_stats, doc_stats):
 def main():
     parts = ["# 端侧打标签模型测评报告\n"]
 
-    parts.append("## 一、LLM 裁判评审结果（推荐优先看这部分）\n")
     image_judge_rows = load_jsonl(os.path.join(config.RESULTS_DIR, "judge_images.jsonl"))
     doc_judge_rows = load_jsonl(os.path.join(config.RESULTS_DIR, "judge_documents.jsonl"))
+    image_stats = judge_stats(image_judge_rows)
+    doc_stats = judge_stats(doc_judge_rows)
+    image_calib = load_calibration(os.path.join(config.RESULTS_DIR, "calibration_images.csv"))
+    doc_calib = load_calibration(os.path.join(config.RESULTS_DIR, "calibration_documents.csv"))
+
+    # 结论速览放全文最前面：多数人想先看这个，下面一/二/三/四节的详细数字是支撑这句结论的证据，
+    # 不是反过来读——分级判定本身不产生新信息，是不是真能信，看这里有没有标"未做"人工校准。
+    parts.append("## 结论速览\n")
+    parts.append(summarize_headline("图片", image_stats, image_calib))
+    parts.append(summarize_headline("文档", doc_stats, doc_calib))
+    parts.append(
+        "\n（分级判定的阈值在 `core/config.py` 的 `QUALITY_GATE` 里，按你的业务风险容忍度自己调；"
+        "人工校准用 `python scripts/build_calibration_sample.py --kind images/documents` 生成抽样表，"
+        "填完 `human_agree` 列后重新跑本脚本即可。）\n"
+    )
+
+    parts.append("## 一、LLM 裁判评审结果（推荐优先看这部分）\n")
     parts.append(summarize_judge(image_judge_rows, "图片"))
     parts.append(summarize_judge(doc_judge_rows, "文档"))
 
@@ -208,7 +300,7 @@ def main():
     parts.append(summarize_semantic(os.path.join(config.RESULTS_DIR, "semantic_scores_images.csv"), "图片"))
     parts.append(summarize_semantic(os.path.join(config.RESULTS_DIR, "semantic_scores_documents.csv"), "文档"))
 
-    parts.append(build_conclusion(judge_stats(image_judge_rows), judge_stats(doc_judge_rows)))
+    parts.append(build_conclusion(image_stats, doc_stats))
 
     parts.append("## 四、端侧模型性能（延迟/吞吐，跟标签质量是两件独立的事）\n")
     parts.append(summarize_perf(load_jsonl(os.path.join(config.RESULTS_DIR, "images_tags_small.jsonl")), "图片"))

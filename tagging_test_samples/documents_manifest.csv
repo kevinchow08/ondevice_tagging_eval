@@ -5,3 +5,15 @@ filename,document_type_cn,document_type_en,language
 04_meeting_minutes.pdf,会议纪要,meeting minutes,en
 05_产品规格书_spec_sheet.pdf,产品规格书,product spec sheet,zh
 06_news_article.pdf,新闻报道,news article,en
+07_采购订单_purchase_order.pdf,采购订单,purchase order,zh
+08_保密协议_nda.pdf,保密协议,non-disclosure agreement,en
+09_银行对账单_bank_statement.pdf,银行对账单,bank statement,zh
+10_报销单_expense_report.pdf,报销单,expense report,zh
+11_项目提案_project_proposal.pdf,项目提案,project proposal,en
+12_新闻通稿_press_release.pdf,新闻通稿,press release,zh
+13_质保条款_warranty_terms.pdf,质保条款,warranty terms,zh
+14_测试报告_test_report.pdf,测试报告,test report,en
+15_录用offer_offer_letter.pdf,录用通知,offer letter,en
+16_装箱单_packing_list.pdf,装箱单,packing list,zh
+17_绩效考核表_performance_review.pdf,绩效考核表,performance review,zh
+18_专利摘要_patent_abstract.pdf,专利摘要,patent abstract,en
