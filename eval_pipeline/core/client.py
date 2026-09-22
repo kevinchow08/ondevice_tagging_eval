@@ -17,6 +17,15 @@ def is_local(base_url: str) -> bool:
     return any(host in base_url for host in ("localhost", "127.0.0.1"))
 
 
+def supports_json_schema(profile: dict) -> bool:
+    """要不要对这个 profile 的请求加 response_format(JSON Schema结构化输出)约束。
+    本地地址默认信任（我们自己验证过 llama.cpp 支持）；云端地址默认不信任——这个功能是否生效
+    取决于对面推理引擎支不支持，不是所有 OpenAI 兼容接口都实现了，贸然打开可能导致请求直接报错。
+    云端模型要用的话，在 config.py 里显式把该 profile 的 "supports_json_schema" 设成 True，
+    前提是你自己已经测试确认过那个服务商真的支持——工具不会替你猜。"""
+    return is_local(profile["base_url"]) or profile.get("supports_json_schema", False)
+
+
 def get_client(profile: dict) -> OpenAI:
     base_url = profile["base_url"]
     if is_local(base_url):

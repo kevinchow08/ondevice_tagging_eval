@@ -72,11 +72,19 @@ def main():
 
         cand_emb = model.encode(cand_tags, convert_to_tensor=True)
         ref_emb = model.encode(ref_tags, convert_to_tensor=True)
+        # sim 是 [n_candidate, n_reference] 的矩阵：候选标签在行，参考标签在列，
+        # sim[i][j] = 第i个候选标签 和 第j个参考标签 的余弦相似度(0~1，越大越像)。
         sim = util.cos_sim(cand_emb, ref_emb)  # [n_candidate, n_reference]
 
-        # precision：模型打的每个标签，是否在参考标签里有相似的（>=阈值才算命中）
+        # precision：站在"候选标签"这一边问——我打的每个标签，在参考标签里能不能找到相似的？
+        # dim=1 是压掉"列"（参考标签）这个维度，对每一行（每个候选标签）取它跟所有参考标签里
+        # 相似度最高的那个值，得到长度=n_candidate的向量。>=阈值就算这个候选标签"找到对应物"，
+        # 再取均值 = 候选标签里有多少比例是"靠谱、参考里确实有类似东西"的，衡量"瞎编的多不多"。
         precision = (sim.max(dim=1).values >= config.SEMANTIC_MATCH_THRESHOLD).float().mean().item()
-        # recall：参考标签里的每一个，是否被模型的某个标签覆盖到了
+        # recall：反过来站在"参考标签"这一边问——参考模型觉得该打的每个标签，有没有被候选覆盖到？
+        # dim=0 是压掉"行"（候选标签）这个维度，对每一列（每个参考标签）取它跟所有候选标签里
+        # 相似度最高的那个值，得到长度=n_reference的向量。>=阈值就算这个参考标签"被覆盖到"，
+        # 再取均值 = 该打的标签里有多少比例真被打出来了，衡量"漏打的多不多"。
         recall = (sim.max(dim=0).values >= config.SEMANTIC_MATCH_THRESHOLD).float().mean().item()
 
         rows.append(

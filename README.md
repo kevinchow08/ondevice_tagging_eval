@@ -129,11 +129,17 @@ python scripts/tag_images.py --profile small --concurrency 4
 
 6）跑全量 + 裁判评审 + 汇总
 
+**裁判现在是"两两对比"模式**（candidate=被测的 small 模型 vs comparison=reference 模型独立打的标签，裁判直接看图/原文判断哪组更准，不是给 small 单独打一个绝对分——这样更可靠，参考 [MT-Bench 论文](https://arxiv.org/abs/2306.05685) 的结论）。所以 `llm_judge.py` 现在依赖 reference 模型也独立打过一遍标签，`tag_images.py --profile reference` 这步不能省：
+
+裁判还会**可选地**用上 `images_manifest.csv`/`documents_manifest.csv` 里的 `reference_label_en`/`document_type_cn` 字段（如果有的话）——不是拿去做精确字符串匹配（细分物种名跟"只给大类"的要求会冲突），是作为"已知事实"喂给裁判帮它核对，能减少裁判和参考模型"两边共享同一个认知盲区"的风险（比如都把某种昆虫认错成另一类）。这个字段留空也完全能跑，裁判会退化成纯靠自己看图/看原文判断，不强制要求自建数据集也要维护这个标注。
+
 ```bash
 python scripts/tag_images.py --profile small
 python scripts/tag_documents.py --profile small
+python scripts/tag_images.py --profile reference       # 裁判要用，付费API
+python scripts/tag_documents.py --profile reference    # 裁判要用，付费API
 
-# 裁判评审要调用付费API，建议先抽查再决定要不要跑全量
+# 裁判评审也要调用付费API，建议先抽查再决定要不要跑全量
 python scripts/llm_judge.py --kind images --limit 20
 python scripts/llm_judge.py --kind documents
 python scripts/llm_judge.py --kind images     # 抽查结果OK了，再补跑剩下的
@@ -145,12 +151,13 @@ python scripts/summarize.py
 
 ### 局限性（诚实说明，别拿这个当权威 benchmark）
 
-- **裁判没做过校准**：目前是裁判打一次分就采信，没有验证过裁判的 `accuracy_score` 本身准不准（`llm_judge.py` 已经把请求的 `temperature` 锁到 0，降低同一批内容重跑时分数漂移的概率，但这只是减少"裁判自己不稳定"这一项误差来源，不代表裁判的判断本身是准的）。
+- **裁判没做过人工校准**：裁判现在是两两对比（候选 vs 参考模型独立打的标签），比早期的绝对打分更可靠（[MT-Bench](https://arxiv.org/abs/2306.05685) 论文的结论），请求也把 `temperature` 锁到了 0（降低同一批内容重跑时判断漂移的概率）。但这些都只是减少"裁判自己不稳定"这类误差，**没有验证过裁判的判断本身准不准**——没有拿人工判断去校准过。MT-Bench 论文的建议是找 30~50 条样本人工标注、算裁判和人的一致率，这一步我们还没做。
 - **样本量有限**：默认自带的测试图片是 ImageNet 风格的单目标自然图，文档样本只有 6 份——n 都不大，结论只能当方向性参考，别当成统计意义上的定论。
-- **裁判模型自己也会犯错**：拿 LLM 当 ground truth，裁判自己识别错、看错图的情况现实中会发生，目前没有人工抽查兜底。
+- **裁判模型自己也会犯错，"参考模型"也不是ground truth**：裁判和拿来对比的参考模型都可能犯同样的错（比如两边都把某种昆虫认错成同一个错误类别），纯两两对比看不出这种共享盲区，只有真正回看原图/原文才能发现——这也是为什么瞎编/漏打这两个指标是裁判直接核对原始内容得出的，不是靠对比算出来的。有 `reference_label_en`/`document_type_cn` 这个可选的弱参考字段时，裁判会额外用它核对，能缓解一部分这个问题，但不是每条样本都保证有这个字段，缓解不代表消除。
+- **开放词表打标签这个场景，没有能直接照搬的现成评估基准**：图像描述里常用的 CHAIR/POPE 之类的成熟指标，本质上还是依赖每张图片预先标注好的固定物体列表做核对；我们这里没有固定标签集（图片/文档集合可以自由扩充），只是借用了 CHAIR 的计数方式（瞎编率算法），验证的判断来源换成了"更强模型直接看图裁决"，这个组合本身没有被哪篇论文直接验证过，需要靠上面说的人工校准去补上这一环。
 - **依赖云端商业模型做基准的话可复现性打折扣**：商业模型的权重可能被服务商静默更新，同一个 model id 不同时间的表现未必一致，建议在报告里记录清楚用的是哪个模型快照/哪一天跑的。
 
-**结论**：这是一个方法论合理的轻量评测脚手架，适合快速判断一个端侧模型的标签能力大致水平、找出系统性短板（比如"细分类目容易瞎编""文档结构化字段容易漏打"这类问题）；不适合当成严谨的排行榜工具来引用绝对分数。
+**结论**：这是一个方法论合理的轻量评测脚手架，适合快速判断一个端侧模型的标签能力大致水平、找出系统性短板（比如"细分类目容易瞎编""文档结构化字段容易漏打"这类问题）；不适合当成严谨的排行榜工具来引用绝对分数，尤其是在人工校准这一步补上之前。
 
 ### License
 
@@ -283,11 +290,17 @@ python scripts/tag_images.py --profile small --concurrency 4
 
 6. Run the full batch + judge + summary
 
+**The judge now runs in pairwise mode** (candidate = the small/candidate model under test vs. comparison = the reference model's independently-generated tags; the judge looks directly at the image/text and decides which set is more accurate, rather than giving the candidate an absolute score — this is more reliable, per the [MT-Bench paper](https://arxiv.org/abs/2306.05685)'s findings). So `llm_judge.py` now depends on the reference model having tagged the same set independently — don't skip the `--profile reference` pass:
+
+The judge also **optionally** uses the `reference_label_en`/`document_type_cn` field from `images_manifest.csv`/`documents_manifest.csv` when present — not for exact string matching (a fine-grained species name would conflict with the "coarse category only" requirement), but as a known fact fed to the judge to help it verify, which reduces the risk of the judge and the reference model sharing the same blind spot (e.g. both misidentifying the same insect the same wrong way). Leaving the field blank works fine too — the judge just falls back to judging purely from the image/text, so datasets you build yourself aren't required to maintain this label.
+
 ```bash
 python scripts/tag_images.py --profile small
 python scripts/tag_documents.py --profile small
+python scripts/tag_images.py --profile reference       # needed for the judge, paid API
+python scripts/tag_documents.py --profile reference    # needed for the judge, paid API
 
-# Judging calls a paid API — sample first before committing to the full run
+# Judging also calls a paid API — sample first before committing to the full run
 python scripts/llm_judge.py --kind images --limit 20
 python scripts/llm_judge.py --kind documents
 python scripts/llm_judge.py --kind images     # once the sample looks good, run the rest
@@ -299,12 +312,13 @@ python scripts/summarize.py
 
 ### Limitations (stated honestly — don't treat this as an authoritative benchmark)
 
-- **The judge itself is uncalibrated**: a single judge pass is taken at face value, with no check on whether its `accuracy_score` is itself reliable; LLM judges default to a non-zero `temperature`, so re-running the same batch will produce some score variance — lower the judge request's `temperature` if you want more stability.
+- **The judge hasn't been calibrated against humans**: it now runs pairwise (candidate vs. the reference model's independently-generated tags) rather than absolute scoring, which is more reliable per the [MT-Bench paper](https://arxiv.org/abs/2306.05685)'s findings, and requests pin `temperature` to 0 (reducing drift when re-running the same batch). But both only reduce "the judge being unstable" — **there's still no check that the judge's actual judgment is correct**, since it hasn't been validated against human ratings. MT-Bench's own recommendation is a 30-50 example human-annotated calibration set to measure judge-human agreement; we haven't done that step yet.
 - **Sample sizes are small**: the bundled test images are single-subject, ImageNet-style natural photos, and there are only 6 document samples — treat conclusions as directional, not statistically definitive.
-- **The judge model can itself be wrong**: using an LLM as ground truth means it can misread an image or misjudge a case, and there's currently no human spot-check as a backstop.
+- **The judge model can itself be wrong, and so can the "reference" model**: the judge and the reference model it compares against can share the same blind spot (e.g. both misclassify the same insect the same wrong way), which a pairwise comparison alone won't catch — only checking against the actual image/text catches that. That's why hallucination/missing-tag counts are derived from the judge directly checking the source content, not from the pairwise comparison itself. When the optional `reference_label_en`/`document_type_cn` field is present, the judge uses it as an extra check, which helps — but it's not guaranteed on every sample, so this mitigates the risk rather than eliminating it.
+- **There's no off-the-shelf benchmark for truly open-vocabulary tagging**: established image-captioning hallucination metrics like CHAIR/POPE still rely on a fixed, pre-annotated object list per image; we have no fixed label set (the image/document collection is meant to be freely extensible), so we borrowed CHAIR's counting formula but swapped in "a stronger model judges directly from the image" as the source of truth — that specific combination hasn't been validated by any single published benchmark, which is exactly why the human-calibration step above matters.
 - **Reproducibility is limited when the reference is a commercial cloud model**: providers can silently update model weights behind a stable model id, so results from the same id may drift over time — record which model snapshot and date you ran against.
 
-**Bottom line**: this is a methodologically sound, lightweight evaluation scaffold — good for quickly gauging an on-device model's tagging ability and surfacing systematic weaknesses (e.g. "hallucinates on fine-grained categories", "under-extracts structured fields from documents"). It is not meant to be cited as a rigorous leaderboard tool with authoritative absolute scores.
+**Bottom line**: this is a methodologically sound, lightweight evaluation scaffold — good for quickly gauging an on-device model's tagging ability and surfacing systematic weaknesses (e.g. "hallucinates on fine-grained categories", "under-extracts structured fields from documents"). It is not meant to be cited as a rigorous leaderboard tool with authoritative absolute scores, especially before the human-calibration step is done.
 
 ### License
 

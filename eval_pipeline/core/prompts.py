@@ -78,77 +78,119 @@ DOCUMENT_TAGGING_PROMPT_EN = (
 )
 
 IMAGE_JUDGE_PROMPT_ZH = (
-    "你是标签质量评审员。请看这张图片，并评审下面这组标签是否准确、是否有遗漏或瞎编。\n\n"
-    "评审标准（重要，请严格遵守）：被评审的模型只被要求给出大类标签（比如\"鸟\"\"蜥蜴\"\"花\"），"
+    "你是标签质量评审员。请看这张图片，比较下面两组【各自独立打出来的】标签，判断哪一组更准确。\n"
+    "两组标签是不同模型各自看图独立打的，互相不知道对方说了什么，请不要假设哪组一定更权威，"
+    "完全依据你自己对图片内容的判断来评审。\n"
+    "{ground_truth_hint}\n"
+    "A组（candidate，待评审）：{candidate_tags}\n"
+    "B组（comparison，对照组）：{comparison_tags}\n\n"
+    "评审标准（重要，请严格遵守）：这个打标签任务只要求给出大类标签（比如\"鸟\"\"蜥蜴\"\"花\"），"
     "不要求、也不鼓励识别具体的物种/品种/型号/学名。所以：\n"
     "- 标签没有精确到具体物种/品种/型号，不算漏打，不要因为这个扣分；\n"
     "- 只有当标签连大类都判断错了（比如把蜘蛛叫成昆虫、把猫叫成狗），或者标签内容和图片明显不符，"
-    "才算瞎编（hallucinated_tags）；\n"
-    "- missing_important_tags 只填图片里明显存在、大类层面就能看出来但被漏掉的内容"
+    "才算瞎编；\n"
+    "- missing_important_tags 只填图片里明显存在、大类层面就能看出来但A组漏掉的内容"
     "（比如背景里明显的其他物体、颜色、动作这类，而不是更细的物种/型号）；\n"
-    "- 如果标签堆砌了大量重复或近义反复、缺乏信息量（比如同一个意思用不同说法写了好几遍），"
-    "这个要在 accuracy_score 里扣分，并在 comment 里指出。\n\n"
-    "待评审标签：{candidate_tags}\n\n"
+    "- 如果一组标签堆砌了大量重复或近义反复、缺乏信息量（比如同一个意思用不同说法写了好几遍），"
+    "这个要在判断哪组更好时算作扣分项。\n\n"
+    "请你直接对着图片核实两组标签各自的问题，然后给出：\n"
+    "1. hallucinated_tags：**A组**里编造的/大类判断错误的标签；\n"
+    "2. missing_important_tags：图片里明显存在，但**A组**没提到的大类层面内容；\n"
+    "3. winner：综合两组各自的瞎编情况、漏打情况、信息量，判断哪组整体更准确——"
+    "\"candidate\"(A组更好)、\"comparison\"(B组更好)、\"tie\"(两组质量相当，都对或都有类似程度的问题)；\n"
+    "4. comment：一句话说明你为什么这样判断。\n\n"
     "严格只输出以下 JSON，不要输出其他文字：\n"
-    '{{"hallucinated_tags": ["模型编造的、图片中并不存在的标签，或大类判断错误的标签"], '
-    '"missing_important_tags": ["图片中明显存在但模型漏打的大类层面标签"], '
-    '"accuracy_score": 0到1之间的小数（表示总体准确程度）, '
+    '{{"hallucinated_tags": ["A组里编造的、图片中并不存在的标签，或大类判断错误的标签"], '
+    '"missing_important_tags": ["图片中明显存在但A组漏打的大类层面标签"], '
+    '"winner": "candidate 或 comparison 或 tie", '
     '"comment": "一句话点评"}}'
 )
 
 IMAGE_JUDGE_PROMPT_EN = (
-    "You are a tag quality reviewer. Look at this image and review whether the tag set below is "
-    "accurate, and whether anything is missing or hallucinated.\n\n"
-    "Review criteria (important, follow strictly): the model being reviewed was only asked for "
-    "general-category tags (e.g. \"bird\", \"lizard\", \"flower\"), not specific species/breed/"
-    "model/scientific names — that's neither required nor encouraged. So:\n"
-    "- Not being precise down to species/breed/model does NOT count as missing — don't dock points "
-    "for that;\n"
-    "- Only count something as hallucinated (hallucinated_tags) if the general category itself is "
-    "wrong (e.g. calling a spider an insect, a cat a dog), or the tag clearly doesn't match the "
-    "image;\n"
+    "You are a tag quality reviewer. Look at this image and compare the two tag sets below, each "
+    "produced independently by a different model. Neither model saw the other's output, so don't "
+    "assume either one is automatically more authoritative — judge purely from what you see in the "
+    "image.\n"
+    "{ground_truth_hint}\n"
+    "Set A (candidate, under review): {candidate_tags}\n"
+    "Set B (comparison): {comparison_tags}\n\n"
+    "Review criteria (important, follow strictly): this tagging task only asks for general-category "
+    "tags (e.g. \"bird\", \"lizard\", \"flower\"), not specific species/breed/model/scientific names "
+    "— that's neither required nor encouraged. So:\n"
+    "- Not being precise down to species/breed/model does NOT count as missing — don't penalize for "
+    "that;\n"
+    "- Only count something as hallucinated if the general category itself is wrong (e.g. calling a "
+    "spider an insect, a cat a dog), or the tag clearly doesn't match the image;\n"
     "- missing_important_tags should only list things clearly present in the image and identifiable "
-    "at the general-category level that were left out (e.g. another obvious object in the "
+    "at the general-category level that Set A left out (e.g. another obvious object in the "
     "background, a color, an action — not finer species/model detail);\n"
-    "- If the tags are padded with a lot of exact or near-synonym repetition that adds no real "
-    "information (e.g. the same idea restated several different ways), dock points in accuracy_score "
-    "and call it out in the comment.\n\n"
-    "Tags under review: {candidate_tags}\n\n"
+    "- If a set is padded with a lot of exact or near-synonym repetition that adds no real "
+    "information, count that against it when deciding which set is better.\n\n"
+    "Check both sets directly against the image, then give:\n"
+    "1. hallucinated_tags: tags in **Set A** that are made up or get the general category wrong;\n"
+    "2. missing_important_tags: general-category-level things clearly present in the image that "
+    "**Set A** left out;\n"
+    "3. winner: weighing hallucination, omission and informativeness for both sets, which is overall "
+    "more accurate — \"candidate\" (A is better), \"comparison\" (B is better), or \"tie\" (comparable "
+    "quality, whether both are good or both have similar-degree issues);\n"
+    "4. comment: one sentence explaining your reasoning.\n\n"
     "Output strictly the following JSON, nothing else:\n"
-    '{{"hallucinated_tags": ["tags the model made up that aren\'t in the image, or where the general '
-    'category itself is wrong"], '
-    '"missing_important_tags": ["general-category-level tags clearly present in the image but left out"], '
-    '"accuracy_score": "a number between 0 and 1 for overall accuracy", '
+    '{{"hallucinated_tags": ["tags in Set A that are made up and aren\'t in the image, or where the '
+    'general category itself is wrong"], '
+    '"missing_important_tags": ["general-category-level tags clearly present in the image but Set A left out"], '
+    '"winner": "candidate or comparison or tie", '
     '"comment": "one-sentence assessment"}}'
 )
 
 DOCUMENT_JUDGE_PROMPT_ZH = (
-    "你是标签质量评审员。下面是一份文档的原文，以及待评审模型给出的文档类型和标签。\n"
-    "请依据原文判断这些标签是否准确、是否有遗漏或瞎编。\n\n"
+    "你是标签质量评审员。下面是一份文档的原文，以及两组【各自独立生成的】文档类型和标签。\n"
+    "两组是不同模型各自看原文独立给出的，互相不知道对方说了什么，请不要假设哪组一定更权威，"
+    "完全依据原文内容自己判断。\n"
+    "{ground_truth_hint}\n"
     "文档原文：\n{document_text}\n\n"
-    "待评审的 document_type：{candidate_type}\n"
-    "待评审的 tags：{candidate_tags}\n\n"
+    "A组（candidate，待评审）document_type：{candidate_type}，tags：{candidate_tags}\n"
+    "B组（comparison，对照组）document_type：{comparison_type}，tags：{comparison_tags}\n\n"
+    "请你直接对着原文核实两组各自的问题，然后给出：\n"
+    "1. type_correct：A组的 document_type 判断得对不对（true/false）；\n"
+    "2. hallucinated_tags：**A组**里编造的、原文中并不存在的标签（数字/金额/日期这类要核对是否跟"
+    "原文完全一致，改写、四舍五入、抄错位数都算瞎编）；\n"
+    "3. missing_important_tags：原文里明显存在，但**A组**没提到的重要标签；\n"
+    "4. winner：综合两组各自的瞎编情况、漏打情况、document_type是否判断对，判断哪组整体更准确——"
+    "\"candidate\"(A组更好)、\"comparison\"(B组更好)、\"tie\"(两组质量相当)；\n"
+    "5. comment：一句话说明你为什么这样判断。\n\n"
     "严格只输出以下 JSON，不要输出其他文字：\n"
     '{{"type_correct": true或false, '
-    '"hallucinated_tags": ["模型编造的、原文中并不存在的标签"], '
-    '"missing_important_tags": ["原文中明显存在但模型漏打的重要标签"], '
-    '"accuracy_score": 0到1之间的小数（表示总体准确程度）, '
+    '"hallucinated_tags": ["A组里编造的、原文中并不存在的标签"], '
+    '"missing_important_tags": ["原文中明显存在但A组漏打的重要标签"], '
+    '"winner": "candidate 或 comparison 或 tie", '
     '"comment": "一句话点评"}}'
 )
 
 DOCUMENT_JUDGE_PROMPT_EN = (
-    "You are a tag quality reviewer. Below is a document's original text, along with the document "
-    "type and tags given by the model under review.\n"
-    "Based on the original text, judge whether these tags are accurate, and whether anything is "
-    "missing or hallucinated.\n\n"
+    "You are a tag quality reviewer. Below is a document's original text, along with two "
+    "independently-generated sets of document type and tags. Neither model saw the other's output, "
+    "so don't assume either one is automatically more authoritative — judge purely from the "
+    "original text.\n"
+    "{ground_truth_hint}\n"
     "Document text:\n{document_text}\n\n"
-    "document_type under review: {candidate_type}\n"
-    "tags under review: {candidate_tags}\n\n"
+    "Set A (candidate, under review) document_type: {candidate_type}, tags: {candidate_tags}\n"
+    "Set B (comparison) document_type: {comparison_type}, tags: {comparison_tags}\n\n"
+    "Check both sets directly against the original text, then give:\n"
+    "1. type_correct: is Set A's document_type correct (true/false);\n"
+    "2. hallucinated_tags: tags in **Set A** that are made up and aren't in the original text "
+    "(for numbers/amounts/dates, check they exactly match the source — rewording, rounding, or a "
+    "wrong digit all count as hallucinated);\n"
+    "3. missing_important_tags: important things clearly present in the original text that "
+    "**Set A** left out;\n"
+    "4. winner: weighing hallucination, omission, and whether document_type was correct for both "
+    "sets, which is overall more accurate — \"candidate\" (A is better), \"comparison\" (B is "
+    "better), or \"tie\" (comparable quality);\n"
+    "5. comment: one sentence explaining your reasoning.\n\n"
     "Output strictly the following JSON, nothing else:\n"
     '{{"type_correct": true or false, '
-    '"hallucinated_tags": ["tags the model made up that aren\'t in the original text"], '
-    '"missing_important_tags": ["important tags clearly present in the original text but left out"], '
-    '"accuracy_score": "a number between 0 and 1 for overall accuracy", '
+    '"hallucinated_tags": ["tags in Set A that are made up and aren\'t in the original text"], '
+    '"missing_important_tags": ["important tags clearly present in the original text but Set A left out"], '
+    '"winner": "candidate or comparison or tie", '
     '"comment": "one-sentence assessment"}}'
 )
 
@@ -162,6 +204,25 @@ PROMPTS = {
 
 def get_prompt(name: str, lang: str = "zh") -> str:
     return PROMPTS[name][lang]
+
+
+def ground_truth_hint(label, lang: str = "zh") -> str:
+    """给裁判 prompt 里 {ground_truth_hint} 占位符用的那句话。label 是 manifest 里预先标好的
+    弱参考（图片的 reference_label_en / 文档的 document_type_cn），可选——传空/None 就返回空字符串，
+    裁判退化成纯靠自己看图/看原文判断，不强制要求每条样本都有这个标注。
+    故意强调"不代表标准的标签表达方式，只是帮你核对事实"，不要让裁判把这当成必须原样出现在标签里的
+    精确匹配目标——那样会误伤"只给大类、不给细分物种"这种我们主动要求的正确行为。"""
+    if not label:
+        return ""
+    if lang == "zh":
+        return (
+            f"供参考（不代表标准的标签表达方式，只是帮你核对关键事实，不要求标签里必须原样出现这个词）："
+            f"已知的标准分类/类型是「{label}」。\n"
+        )
+    return (
+        f"For reference (not the required tag wording, just a fact to help you verify — the tags "
+        f'don\'t need to literally contain this word): the known ground-truth category/type is "{label}".\n'
+    )
 
 
 # 保留旧的模块级常量名，指向中文版，避免破坏还在用旧名字导入的代码。

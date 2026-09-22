@@ -29,10 +29,10 @@ from core.client import (
     call_with_retry,
     extract_perf_stats,
     get_client,
-    is_local,
     json_schema_format,
     parse_json_loose,
     run_concurrent,
+    supports_json_schema,
 )
 from core.prompts import get_prompt
 
@@ -65,7 +65,7 @@ def main():
     prompt_template = get_prompt("document_tagging", args.lang)
     response_format = (
         json_schema_format("document_tags", DOCUMENT_TAGS_SCHEMA)
-        if is_local(profile["base_url"])
+        if supports_json_schema(profile)
         else None
     )
 

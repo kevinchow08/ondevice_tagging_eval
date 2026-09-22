@@ -27,21 +27,38 @@ def load_jsonl(path):
 
 def judge_stats(rows):
     """算出裁判结果的关键数字，返回 dict，None 表示没有有效数据。
-    单独抽出来是因为"结论与建议"那节要复用这些数字，不想重新解析一遍 rows。"""
-    scored = [r for r in rows if r.get("verdict") and r["verdict"].get("accuracy_score") is not None]
+    单独抽出来是因为"结论与建议"那节要复用这些数字，不想重新解析一遍 rows。
+
+    裁判现在是"两两对比"（candidate=被测的small模型 vs comparison=reference模型独立打的标签），
+    不是绝对打分——参考 MT-Bench 论文的结论：pairwise comparison 比 absolute scoring 更可靠。
+    瞎编/漏打这两个指标的算法沿用了图像描述领域的 CHAIR 指标（Rohrbach et al. 2018）：
+    CHAIR_s = 有瞎编的样本占比（这里是 halluc_rate），CHAIR_i = 平均每条瞎编标签数
+    （这里是 avg_halluc_per_sample）。这两个指标是直接对着图片/原文核实出来的，不依赖
+    两两对比，即使 winner 是 tie/candidate 也可能有瞎编（比如两边都有问题时打成 tie）。"""
+    scored = [r for r in rows if r.get("verdict") and r["verdict"].get("winner") in ("candidate", "comparison", "tie")]
     n = len(scored)
     if not n:
         return None
     halluc_counts = [len(r["verdict"].get("hallucinated_tags", [])) for r in scored]
     missing_counts = [len(r["verdict"].get("missing_important_tags", [])) for r in scored]
+    losses = [r for r in scored if r["verdict"]["winner"] == "comparison"]
+    losses.sort(
+        key=lambda r: (
+            len(r["verdict"].get("hallucinated_tags", [])),
+            len(r["verdict"].get("missing_important_tags", [])),
+        ),
+        reverse=True,
+    )
     return {
         "n": n,
-        "avg_score": sum(r["verdict"]["accuracy_score"] for r in scored) / n,
-        "halluc_rate": sum(1 for c in halluc_counts if c > 0) / n,
+        "win_rate": sum(1 for r in scored if r["verdict"]["winner"] == "candidate") / n,
+        "tie_rate": sum(1 for r in scored if r["verdict"]["winner"] == "tie") / n,
+        "loss_rate": len(losses) / n,
+        "halluc_rate": sum(1 for c in halluc_counts if c > 0) / n,  # CHAIR_s
         "missing_rate": sum(1 for c in missing_counts if c > 0) / n,
-        "avg_halluc_per_sample": sum(halluc_counts) / n,
+        "avg_halluc_per_sample": sum(halluc_counts) / n,  # CHAIR_i
         "avg_missing_per_sample": sum(missing_counts) / n,
-        "worst": sorted(scored, key=lambda r: r["verdict"]["accuracy_score"])[:5],
+        "worst": losses[:5],
     }
 
 
@@ -52,28 +69,28 @@ def summarize_judge(rows, label):
     stats = judge_stats(rows)
     lines = [f"### {label}", f"- 样本数：{len(rows)}"]
     if not stats:
-        lines.append("- 平均准确度打分：无有效数据")
+        lines.append("- 无有效裁判数据")
         return "\n".join(lines) + "\n"
 
-    lines.append(f"- 平均准确度打分：{stats['avg_score']:.3f}")
-    # accuracy_score 均值是唯一样本量无关、能跨批次比较的数字。瞎编/漏打用"受影响样本占比"+
-    # "平均每条个数"，不展示累计总数——总数会随样本量线性增长，不同批次之间不可比，
+    lines.append(
+        f"- 对比参考模型（两两对比，不是绝对打分）：被测模型胜 {stats['win_rate']:.0%}，"
+        f"平局 {stats['tie_rate']:.0%}，输给参考模型 {stats['loss_rate']:.0%}"
+    )
+    # halluc_rate/avg_halluc_per_sample 是 CHAIR_s/CHAIR_i 风格的指标：受影响样本占比 +
+    # 平均每条个数，不展示累计总数——总数会随样本量线性增长，不同批次之间不可比，
     # 而且标签给得越少总数天然越好看，跟真实质量没有必然关系。
     lines.append(
-        f"- 瞎编：{stats['halluc_rate']:.0%} 的样本至少有1个瞎编标签，"
-        f"平均每条 {stats['avg_halluc_per_sample']:.2f} 个"
+        f"- 瞎编：{stats['halluc_rate']:.0%} 的样本至少有1个瞎编标签（CHAIR_s），"
+        f"平均每条 {stats['avg_halluc_per_sample']:.2f} 个（CHAIR_i）"
     )
     lines.append(
         f"- 漏打：{stats['missing_rate']:.0%} 的样本至少漏打1个重要标签，"
         f"平均每条 {stats['avg_missing_per_sample']:.2f} 个"
     )
     if stats["worst"]:
-        lines.append("- 得分最低的样本（优先看这些）：")
+        lines.append("- 输给参考模型的样本（优先看这些）：")
         for r in stats["worst"]:
-            lines.append(
-                f"  - `{r['filename']}`：{r['verdict']['accuracy_score']} — "
-                f"{r['verdict'].get('comment', '')}"
-            )
+            lines.append(f"  - `{r['filename']}` — {r['verdict'].get('comment', '')}")
     return "\n".join(lines) + "\n"
 
 
@@ -150,23 +167,27 @@ def build_conclusion(image_stats, doc_stats):
 
     if image_stats:
         lines.append(
-            f"- **图片**：{image_stats['n']} 个抽样样本，平均分 {image_stats['avg_score']:.2f}，"
-            f"{image_stats['halluc_rate']:.0%} 的样本至少有1处瞎编（多为大类生物学/分类常识错误，"
-            f"细分品类识别错误已通过 prompt 排除在评分之外）。"
+            f"- **图片**：{image_stats['n']} 个抽样样本，跟参考模型（更强的云端模型，独立打标签）"
+            f"两两对比，被测端侧模型打平或获胜 {image_stats['win_rate']+image_stats['tie_rate']:.0%}"
+            f"（其中明确获胜 {image_stats['win_rate']:.0%}），明确输给参考模型 "
+            f"{image_stats['loss_rate']:.0%}；{image_stats['halluc_rate']:.0%} 的样本至少有1处瞎编"
+            f"（多为大类生物学/分类常识错误，细分品类识别错误已通过 prompt 排除在评判之外）。"
         )
     if doc_stats:
         lines.append(
-            f"- **文档**：{doc_stats['n']} 个样本，平均分 {doc_stats['avg_score']:.2f}，"
-            f"瞎编率 {doc_stats['halluc_rate']:.0%}，但 {doc_stats['missing_rate']:.0%} 的样本"
-            f"至少漏打1个重要字段/实体——文档这边的短板是漏打，不是瞎编。"
+            f"- **文档**：{doc_stats['n']} 个样本，打平或获胜 "
+            f"{doc_stats['win_rate']+doc_stats['tie_rate']:.0%}，瞎编率 {doc_stats['halluc_rate']:.0%}，"
+            f"但 {doc_stats['missing_rate']:.0%} 的样本至少漏打1个重要字段/实体——"
+            f"文档这边的短板是漏打，不是瞎编。"
         )
 
     lines.append(
         "\n**投产前建议自查的清单：**\n"
         "1. 当前图片评审只抽了一部分样本，文档样本量更小（个位数）——正式上线前建议扩大到全量或"
         "更接近真实业务分布的数据集，再看这些比例是否稳定；\n"
-        "2. 裁判本身没做多次重跑的一致性校验，单次结果有波动，重要决策前建议对同一批样本至少跑2次"
-        "裁判，看分数/比例是否稳定；\n"
+        "2. 裁判请求已经把 temperature 锁到 0，同一批内容重跑分数漂移的概率降低了，但没消除"
+        "\"裁判自己判断错\"这类误差——重要决策前建议做一次人工抽查校准（对着原图/原文，抽30~50条"
+        "看你自己是否同意裁判的 winner/瞎编/漏打判断，算一个人工-裁判一致率）；\n"
         "3. 看清楚失败模式是不是你业务场景真正关心的——比如图片“大类生物学分类错误”对“相册自动分类”"
         "场景可能无关痛痒，对“物种识别”类场景就是致命的；\n"
         "4. 结合下面的性能数据判断延迟能不能接受，标得准但跑不动同样不算达标。"

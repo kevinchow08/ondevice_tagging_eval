@@ -34,6 +34,8 @@ help:
 	@echo ""
 	@echo "可覆盖变量：PROFILE(默认small，tag-images/tag-documents可以传 PROFILE=reference 效果等价于下面两个专用命令)"
 	@echo "           LIMIT(默认不限) CONCURRENCY(默认1) PROMPT_LANG(默认zh)"
+	@echo "           LIMIT/CONCURRENCY/PROMPT_LANG 对 tag-images-reference/tag-documents-reference 同样生效，"
+	@echo "           比如：make tag-images-reference LIMIT=20 CONCURRENCY=4"
 
 setup:
 	python -m venv .venv
@@ -53,10 +55,10 @@ tag-documents:
 	python scripts/tag_documents.py --profile $(PROFILE) $(LIMIT_FLAG) --concurrency $(CONCURRENCY) --lang $(PROMPT_LANG)
 
 tag-images-reference:
-	$(MAKE) tag-images PROFILE=reference
+	python scripts/tag_images.py --profile reference $(LIMIT_FLAG) --concurrency $(CONCURRENCY) --lang $(PROMPT_LANG)
 
 tag-documents-reference:
-	$(MAKE) tag-documents PROFILE=reference
+	python scripts/tag_documents.py --profile reference $(LIMIT_FLAG) --concurrency $(CONCURRENCY) --lang $(PROMPT_LANG)
 
 judge-images:
 	python scripts/llm_judge.py --kind images $(LIMIT_FLAG) --concurrency $(CONCURRENCY) --lang $(PROMPT_LANG)

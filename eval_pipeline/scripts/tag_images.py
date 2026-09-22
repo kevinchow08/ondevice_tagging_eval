@@ -27,10 +27,10 @@ from core.client import (
     encode_image_b64,
     extract_perf_stats,
     get_client,
-    is_local,
     json_schema_format,
     parse_json_loose,
     run_concurrent,
+    supports_json_schema,
 )
 from core.prompts import get_prompt
 
@@ -52,7 +52,7 @@ def main():
     client = get_client(profile)
     prompt_text = get_prompt("image_tagging", args.lang)
     response_format = (
-        json_schema_format("image_tags", TAGS_SCHEMA) if is_local(profile["base_url"]) else None
+        json_schema_format("image_tags", TAGS_SCHEMA) if supports_json_schema(profile) else None
     )
 
     os.makedirs(config.RESULTS_DIR, exist_ok=True)

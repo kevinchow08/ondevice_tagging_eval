@@ -30,6 +30,10 @@ MODEL_PROFILES = {
         "model": os.environ.get("REFERENCE_MODEL_NAME", "qwen3.8-max"),
         # qwen3.8-max 默认开思考模式，裁判任务只要结构化 JSON，关掉更快更省钱也更稳
         "extra_body": {"enable_thinking": False},
+        # response_format(JSON Schema结构化输出)要不要对这个云端模型也用上，默认关闭。
+        # 这个功能能不能生效完全取决于对面服务商的推理引擎支不支持，不是所有OpenAI兼容接口都支持，
+        # 不支持的话请求可能直接报错，换了别的云端模型别想当然打开，自己测试确认过能用再改成 True。
+        "supports_json_schema": False,
     },
 }
 
