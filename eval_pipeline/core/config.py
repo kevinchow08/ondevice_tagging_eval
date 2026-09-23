@@ -2,7 +2,7 @@
 """
 统一配置：模型端点、文件路径、评测参数。
 
-云端/裁判模型的 base_url、api_key 从环境变量读取，不写死在这个文件里，
+被测模型的 base_url、api_key 从环境变量读取，不写死在这个文件里，
 这样 config.py 可以放心提交进 git，不会泄露 key。本地开发时把真实值放进
 eval_pipeline/.env（已加入 .gitignore，不会被提交），参考 .env.example。
 """
@@ -20,38 +20,13 @@ MODEL_PROFILES = {
         "api_key": os.environ.get("SMALL_MODEL_API_KEY", "sk-no-key-required"),
         "model": os.environ.get("SMALL_MODEL_NAME", "qwen3.5-2b"),
     },
-    # 用来生成参考标签、当裁判的更强模型：换成你能调用的任意更强模型
-    # （云端 API，如 OpenAI/GPT-4o，或者你自己本地跑的更大 VL 模型）
-    "reference": {
-        "base_url": os.environ.get(
-            "REFERENCE_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"
-        ),
-        "api_key": os.environ.get("REFERENCE_API_KEY", ""),
-        "model": os.environ.get("REFERENCE_MODEL_NAME", "qwen3.8-max"),
-        # qwen3.8-max 默认开思考模式，裁判任务只要结构化 JSON，关掉更快更省钱也更稳
-        "extra_body": {"enable_thinking": False},
-        # response_format(JSON Schema结构化输出)要不要对这个云端模型也用上，默认关闭。
-        # 这个功能能不能生效完全取决于对面服务商的推理引擎支不支持，不是所有OpenAI兼容接口都支持，
-        # 不支持的话请求可能直接报错，换了别的云端模型别想当然打开，自己测试确认过能用再改成 True。
-        "supports_json_schema": False,
-    },
 }
 
-if not MODEL_PROFILES["reference"]["api_key"]:
-    import warnings
-
-    warnings.warn(
-        "REFERENCE_API_KEY 没设置，reference profile（裁判/参考模型）调用会失败。"
-        "在 eval_pipeline/.env 里设置，参考 .env.example。"
-    )
-
 # 对应 tagging_test_samples 包解压后的路径，按需改成你实际存放的位置。
-# ground_truth_*.csv 既是跑哪些文件的清单，也是人工核实过的标准答案（tags 列）——
+# ground_truth_images.csv 既是跑哪些文件的清单，也是人工核实过的标准答案（tags 列）——
 # 不再需要单独的 manifest.csv + 裁判模型比对，这份文件本身就是评测的基准。
 IMAGES_DIR = "../tagging_test_samples/images"
 IMAGES_GROUND_TRUTH = "../tagging_test_samples/ground_truth_images.csv"
-DOCS_DIR = "../tagging_test_samples/documents"
-DOCS_GROUND_TRUTH = "../tagging_test_samples/ground_truth_documents.csv"
 
 RESULTS_DIR = "results"
 

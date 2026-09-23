@@ -4,9 +4,12 @@
 
 用法：
   python scripts/tag_images.py --profile small                    # 跑你的端侧模型
-  python scripts/tag_images.py --profile reference                 # 跑更强的模型，生成参考标签
   python scripts/tag_images.py --profile small --limit 20          # 先跑20张试跑一下流程通不通
   python scripts/tag_images.py --profile small --concurrency 4     # 并发跑（配合服务端 -np 一起调大，见README）
+
+# --profile 的可选值来自 core/config.py 的 MODEL_PROFILES，默认只有 "small"；如果你想额外拿
+# 另一个模型（比如云端更强的模型）跑出来的标签手动做参考对比，可以自己在 MODEL_PROFILES 里加一个
+# profile，再传对应的名字，不是这个脚本内置的功能。
 
 输出：results/images_tags_<profile>.jsonl，每行一个样本的结果。
 """

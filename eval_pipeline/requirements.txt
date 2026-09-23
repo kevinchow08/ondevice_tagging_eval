@@ -1,8 +1,6 @@
 openai>=1.0
-pdfplumber
 pandas
 tqdm
 python-dotenv
-# 下面这个只有跑 score_semantic.py 才需要，依赖较重（会带一份torch）
-# 如果只想用 llm_judge.py 那条评测路径，可以不装
+# score_semantic.py 用来做语义相似度比对，依赖较重（会带一份torch），是评测唯一的打分路径，必装
 sentence-transformers

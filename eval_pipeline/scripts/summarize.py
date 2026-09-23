@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-把 semantic_scores_*.csv / images_tags_small.jsonl / docs_tags_small.jsonl
-汇总成一份可读的报告。跑之前哪些文件存在就汇总哪些，缺了哪个就在报告里注明跳过，不会报错中断。
+把 semantic_scores_images.csv / images_tags_small.jsonl 汇总成一份可读的报告。
+跑之前哪些文件存在就汇总哪些，缺了哪个就在报告里注明跳过，不会报错中断。
 
-评测基准是 tagging_test_samples/ground_truth_*.csv 这份人工核实过的闭集标签库，
-不再依赖 LLM 裁判或人工校准——precision/recall 是对着固定答案算出来的确定性数字，
+评测基准是 tagging_test_samples/ground_truth_images.csv 这份人工核实过的闭集标签库，
+不依赖 LLM 裁判或人工校准——precision/recall 是对着固定答案算出来的确定性数字，
 裁判模型的主观判断、判了准不准这类问题不存在了，见 README「评测方法」一节。
 
 用法（在 eval_pipeline/ 目录下运行）：python scripts/summarize.py
@@ -33,11 +33,10 @@ def semantic_stats(csv_path):
     """算出跟闭集标签库比对的关键数字，返回 dict，None 表示没有数据。
     单独抽出来是因为"结论与建议"那节要复用这些数字，不想重新解析一遍。
 
-    只保留 precision/recall 均值 + 问题最多的几条样本明细，不再额外算"样本级"的
-    瞎编率/漏打率（CHAIR_s 风格：至少有1个标签没匹配上的样本占比）——这对数字已经被
-    证明在多标签场景下会显得过于严苛、跟直觉不符（precision 0.89 时，"至少错1个"的
-    样本占比能轻松超过一半），留着即使标"仅参考"也容易被误读，索性不算不展示，
-    避免同一份报告里出现两套"瞎编率"数字互相打架。"""
+    只保留 precision/recall/primary_covered 均值 + 问题最多的几条样本明细，不再额外算
+    "样本级"的瞎编率/漏打率（CHAIR_s 风格：至少有1个标签没匹配上的样本占比）——这对数字
+    已经被证明在多标签场景下会显得过于严苛、跟直觉不符（precision 0.89 时，"至少错1个"的
+    样本占比能轻松超过一半），留着即使标"仅参考"也容易被误读，索性不算不展示。"""
     if not os.path.exists(csv_path):
         return None
     df = pd.read_csv(csv_path)
@@ -67,36 +66,28 @@ def semantic_stats(csv_path):
             }
         )
 
-    stats = {
+    return {
         "n": n,
         "avg_precision": df["precision"].mean(),
         "avg_recall": df["recall"].mean(),
+        "primary_covered": df["primary_covered"].mean(),
         "worst": worst,
     }
-    if "primary_covered" in df.columns:
-        # 只有图片这边有这一列——标准答案库写的时候，每条 tags 的第一个标签固定是"主体大类"
-        # （抽查过200条里随机20条+前20条，全部成立），primary_covered 就是"这一个最重要的
-        # 标签有没有被候选标签覆盖到"，不要求剩下颜色/数量/姿态这些次要标签也全覆盖。
-        # 文档那边标签顺序没有这个约定（第一个经常只是原文里先出现的编号/类型自述，
-        # 不是刻意按业务重要性排的），所以文档没有这一列，recall 仍然是全量覆盖率。
-        stats["primary_covered"] = df["primary_covered"].mean()
-    return stats
 
 
 def grade(stats):
-    """定级用的"漏打"信号：图片这边用 primary_covered（1-覆盖率），只看标准答案里最重要的
-    那个主体标签有没有被覆盖到；没有 primary_covered 这一列（文档）时，退回用 1-avg_recall
-    （要求全部标准答案标签都覆盖到）。这两种"漏打率"定义不一样，取决于哪边有更细的标注：
-    要求开放式生成任务把5~15个标准答案标签一个不漏全覆盖，对图片这种自由描述场景来说门槛
-    偏高，抓准最重要的主体才是真正决定"能不能用"的门槛；文档目前没有这种"重要性排序"的
-    标注，暂时没法只看"最重要的那个"，还是按全量覆盖率算，参见 semantic_stats() 的说明。
+    """定级用"标签未匹配率"(=1-precision)和"主体标签未覆盖率"(=1-primary_covered)，
+    哪个落在更差的档位就用哪个（短板原则）。阈值来自 config.QUALITY_GATE，写死但可调。
 
-    瞎编率哪个落在更差的档位就用哪个（短板原则）。阈值来自 config.QUALITY_GATE，写死但可调。
+    漏打这一侧用 primary_covered 而不是完整 recall：标准答案库里每条 tags 的第一个标签
+    固定是"主体大类"（抽查过200条里随机20条+前20条，全部成立），要求开放式生成任务把
+    5~15个标准答案标签一个不漏全覆盖，对图片这种自由描述场景来说门槛偏高——抓准最重要的
+    主体才是真正决定"能不能用"的门槛，完整 recall 仍然保留展示，作为更细粒度的参考。
 
     "标签未匹配率"这个词特意不叫"瞎编率"（改版前的老叫法）——"未匹配"跟"瞎编"不是一回事：
     候选标签在标准答案里找不到语义相似对应物，只说明"没人/没模型验证过这个标签是对的"，
-    不代表"已经确认是编的"。以前 LLM 裁判会真的对着原图/原文核实、确认了才叫瞎编；现在这
-    只是"标准答案这份人工一次性写的清单里没有它"，也可能是清单本身漏写了（这也是为什么
+    不代表"已经确认是编的"。以前 LLM 裁判会真的对着原图核实、确认了才叫瞎编；现在这只是
+    "标准答案这份人工一次性写的清单里没有它"，也可能是清单本身漏写了（这也是为什么
     summarize_semantic() 会把每条样本具体未匹配的标签列出来，让你自己判断是哪种情况）。
 
     换算成"平均"而不是按 CHAIR_s 那样算"样本里至少错1个的占比"，是因为后者在多标签场景下
@@ -104,13 +95,7 @@ def grade(stats):
     跟直觉上"这模型准不准"不匹配。"""
     gate = config.QUALITY_GATE
     unmatched = 1 - stats["avg_precision"]
-
-    if "primary_covered" in stats:
-        missing = 1 - stats["primary_covered"]
-        missing_desc = f"主体标签未覆盖率{missing:.0%}(=1-primary_covered，只看最重要的第一个标签)"
-    else:
-        missing = 1 - stats["avg_recall"]
-        missing_desc = f"标准答案漏打率{missing:.0%}(=1-recall，要求全部标准答案标签都覆盖到)"
+    missing = 1 - stats["primary_covered"]
 
     def band(rate, green_max, yellow_max):
         if rate <= green_max:
@@ -124,13 +109,16 @@ def grade(stats):
         band(missing, gate["green_missing"], gate["yellow_missing"]),
     )
     label = ["🟢 可用", "🟡 有条件可用（建议配合人工审核）", "🔴 不建议直接使用"][level]
-    reason = f"标签未匹配率{unmatched:.0%}(=1-precision)、{missing_desc}，取较差档"
+    reason = (
+        f"标签未匹配率{unmatched:.0%}(=1-precision)、"
+        f"主体标签未覆盖率{missing:.0%}(=1-primary_covered，只看最重要的第一个标签)，取较差档"
+    )
     return label, reason
 
 
 def summarize_headline(label, stats):
     if not stats:
-        return f"- **{label}**：没有找到 semantic_scores 数据，跳过（先跑 tag_*.py 和 score_semantic.py）\n"
+        return f"- **{label}**：没有找到 semantic_scores 数据，跳过（先跑 tag_images.py 和 score_semantic.py）\n"
     level_label, reason = grade(stats)
     return f"- **{label}**：{level_label}（{reason}；对照标准是人工核实过的闭集标签库，不是模型判断）\n"
 
@@ -143,20 +131,14 @@ def summarize_semantic(stats, label):
     lines.append(
         f"- 平均 precision（模型标签里，标准答案能验证上的比例）：{stats['avg_precision']:.3f}"
     )
-    if "primary_covered" in stats:
-        lines.append(
-            f"- 主体标签覆盖率（标准答案第一个标签——即主体大类，有没有被候选标签覆盖到；"
-            f"**分级判定用这个**）：{stats['primary_covered']:.3f}"
-        )
-        lines.append(
-            f"- 平均 recall（要求全部5~15个标准答案标签都覆盖到，仅参考，不参与分级判定）："
-            f"{stats['avg_recall']:.3f}"
-        )
-    else:
-        lines.append(
-            f"- 平均 recall（标准答案里，被模型标签覆盖到的比例；**分级判定用这个**）："
-            f"{stats['avg_recall']:.3f}"
-        )
+    lines.append(
+        f"- 主体标签覆盖率（标准答案第一个标签——即主体大类，有没有被候选标签覆盖到；"
+        f"**分级判定用这个**）：{stats['primary_covered']:.3f}"
+    )
+    lines.append(
+        f"- 平均 recall（要求全部5~15个标准答案标签都覆盖到，仅参考，不参与分级判定）："
+        f"{stats['avg_recall']:.3f}"
+    )
     if stats["worst"]:
         lines.append("- 问题最多的样本（优先看这些，也用来判断是模型真错还是标准答案本身漏标了）：")
         for r in stats["worst"]:
@@ -175,12 +157,12 @@ def _percentile(sorted_vals, p):
 
 
 def summarize_perf(rows, label):
-    """汇总 tag_images.py/tag_documents.py 存的 perf 字段：延迟、生成吞吐量。
-    只对本地(端侧)模型有意义，衡量的是"这个模型实际部署在端上跑起来的资源/速度代价"，
-    跟标签准不准是两件独立的事——一个模型标得很准但慢到不能用，也不算达标。"""
+    """汇总 tag_images.py 存的 perf 字段：延迟、生成吞吐量。
+    衡量的是"这个模型实际部署在端上跑起来的资源/速度代价"，跟标签准不准是两件独立的事——
+    一个模型标得很准但慢到不能用，也不算达标。"""
     perfs = [r["perf"] for r in rows if r.get("perf") and "latency_seconds" in r["perf"]]
     if not perfs:
-        return f"### {label}\n（没有性能数据，用新版 tag_images.py/tag_documents.py 重新跑一遍即可采集到）\n"
+        return f"### {label}\n（没有性能数据，用新版 tag_images.py 重新跑一遍即可采集到）\n"
 
     latencies = sorted(p["latency_seconds"] for p in perfs)
     tps_values = [p["tokens_per_second"] for p in perfs if p.get("tokens_per_second") is not None]
@@ -215,11 +197,11 @@ def summarize_perf(rows, label):
     return "\n".join(lines) + "\n"
 
 
-def build_conclusion(image_stats, doc_stats):
+def build_conclusion(image_stats):
     """这节不是"能不能投产"的自动判定——评测样本量有限，工具没资格替你做这个业务决策。
     这里只是把已经算出来的数字翻译成可读的现状描述，加一个决策清单，帮你自己判断，
     不是代替你判断。"""
-    lines = ["## 三、结论与建议（不是“能否投产”的自动判定，用于辅助你自己判断）\n"]
+    lines = ["## 二、结论与建议（不是“能否投产”的自动判定，用于辅助你自己判断）\n"]
     lines.append(
         "**这份报告能告诉你“现状大概是什么样”，不能替你回答“能不能投产”——那个问题还依赖"
         "你的业务场景对各类错误的容忍度、下游有没有人工审核兜底、样本量是否足够覆盖你的真实场景，"
@@ -227,36 +209,23 @@ def build_conclusion(image_stats, doc_stats):
     )
 
     if image_stats:
-        primary_bit = (
-            f"，主体标签覆盖率 {image_stats['primary_covered']:.3f}（完整 recall {image_stats['avg_recall']:.3f}，仅参考）"
-            if "primary_covered" in image_stats else f"、recall {image_stats['avg_recall']:.3f}"
-        )
         lines.append(
             f"- **图片**：{image_stats['n']} 个样本，对照人工闭集标签库，"
-            f"平均 precision {image_stats['avg_precision']:.3f}{primary_bit}"
-            f"（多为大类生物学/分类常识错误导致标签未匹配上，细分品类识别错误已通过 prompt 排除在"
+            f"平均 precision {image_stats['avg_precision']:.3f}，主体标签覆盖率 "
+            f"{image_stats['primary_covered']:.3f}（完整 recall {image_stats['avg_recall']:.3f}，仅参考）"
+            f"（未匹配的标签多为大类生物学/分类常识错误，细分品类识别错误已通过 prompt 排除在"
             f"评判之外）。"
-        )
-    if doc_stats:
-        lines.append(
-            f"- **文档**：{doc_stats['n']} 个样本，平均 precision {doc_stats['avg_precision']:.3f}、"
-            f"recall {doc_stats['avg_recall']:.3f}——从逐条明细看，文档这边一个反复出现的模式是模型"
-            f"倾向于输出字段名本身（比如「开票日期」「销售方名称」这类标签名），而不是字段的实际值"
-            f"（具体日期、具体公司名），这类漏打不是「没看到」，是「看到了但没提取出来」，"
-            f"跟图片那边的漏打成因不一样，看到低分不要直接归因成瞎编，去看 unmatched_candidate_tags"
-            f"里具体是什么。"
         )
 
     lines.append(
         "\n**投产前建议自查的清单：**\n"
-        "1. 当前评测样本量有限（图片200张，文档18份）——正式上线前建议扩大到更接近真实业务分布的"
-        "数据集规模，标准答案库也要跟着补，再看这些比例是否稳定；\n"
-        "2. 标准答案库是人工一次性写的，不保证穷尽每一处细节——`semantic_scores_*.csv` 里的"
+        "1. 当前评测样本量有限（200张）——正式上线前建议扩大到更接近真实业务分布的数据集规模，"
+        "标准答案库也要跟着补，再看这些比例是否稳定；\n"
+        "2. 标准答案库是人工一次性写的，不保证穷尽每一处细节——`semantic_scores_images.csv` 里的"
         "`unmatched_candidate_tags`/`unmatched_reference_tags` 两列列出了每条样本具体没匹配上"
         "的标签，建议抽查几条，分清楚是模型真错了，还是标准答案本身该补充；\n"
-        "3. 看清楚失败模式是不是你业务场景真正关心的——比如图片“大类生物学分类错误”对“相册自动分类”"
-        "场景可能无关痛痒，对“物种识别”类场景就是致命的；文档“给字段名不给值”对“按类型归档”场景"
-        "问题不大，对“自动摘要/检索关键信息”场景就是致命的；\n"
+        "3. 看清楚失败模式是不是你业务场景真正关心的——比如“大类生物学分类错误”对“相册自动分类”"
+        "场景可能无关痛痒，对“物种识别”类场景就是致命的；\n"
         "4. 结合下面的性能数据判断延迟能不能接受，标得准但跑不动同样不算达标。"
     )
     return "\n".join(lines) + "\n"
@@ -266,27 +235,24 @@ def main():
     parts = ["# 端侧打标签模型测评报告\n"]
 
     image_stats = semantic_stats(os.path.join(config.RESULTS_DIR, "semantic_scores_images.csv"))
-    doc_stats = semantic_stats(os.path.join(config.RESULTS_DIR, "semantic_scores_documents.csv"))
 
-    # 结论速览放全文最前面：多数人想先看这个，下面一/二/三节的详细数字是支撑这句结论的证据，
+    # 结论速览放全文最前面：多数人想先看这个，下面一/三节的详细数字是支撑这句结论的证据，
     # 不是反过来读。评测基准是人工核实过的闭集标签库，这个判定不需要再额外校准验证。
     parts.append("## 结论速览\n")
     parts.append(summarize_headline("图片", image_stats))
-    parts.append(summarize_headline("文档", doc_stats))
     parts.append(
         "\n（分级判定的阈值在 `core/config.py` 的 `QUALITY_GATE` 里，按你的业务风险容忍度自己调；"
-        "评测基准是 `tagging_test_samples/ground_truth_*.csv`，扩充测试集时记得同步补充标准答案。）\n"
+        "评测基准是 `tagging_test_samples/ground_truth_images.csv`，扩充测试集时记得同步补充"
+        "标准答案。）\n"
     )
 
     parts.append("## 一、语义相似度打分结果（对照人工闭集标签库，推荐优先看这部分）\n")
     parts.append(summarize_semantic(image_stats, "图片"))
-    parts.append(summarize_semantic(doc_stats, "文档"))
 
-    parts.append(build_conclusion(image_stats, doc_stats))
+    parts.append(build_conclusion(image_stats))
 
-    parts.append("## 四、端侧模型性能（延迟/吞吐，跟标签质量是两件独立的事）\n")
+    parts.append("## 三、端侧模型性能（延迟/吞吐，跟标签质量是两件独立的事）\n")
     parts.append(summarize_perf(load_jsonl(os.path.join(config.RESULTS_DIR, "images_tags_small.jsonl")), "图片"))
-    parts.append(summarize_perf(load_jsonl(os.path.join(config.RESULTS_DIR, "docs_tags_small.jsonl")), "文档"))
 
     out_path = os.path.join(config.RESULTS_DIR, "summary_report.md")
     with open(out_path, "w", encoding="utf-8") as f:

@@ -61,23 +61,6 @@ TAGS_SCHEMA = {
     "additionalProperties": False,
 }
 
-DOCUMENT_TAGS_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "document_type": {"type": "string"},
-        "tags": {
-            "type": "array",
-            "items": {"type": "string"},
-            "minItems": 3,
-            "maxItems": 15,
-            "uniqueItems": True,
-        },
-    },
-    "required": ["document_type", "tags"],
-    "additionalProperties": False,
-}
-
-
 def encode_image_b64(path: str) -> str:
     with open(path, "rb") as f:
         return base64.b64encode(f.read()).decode("utf-8")

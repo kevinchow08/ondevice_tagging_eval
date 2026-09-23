@@ -49,49 +49,8 @@ IMAGE_TAGGING_PROMPT_EN = (
     '{"tags": ["tag1", "tag2", ...]}'
 )
 
-DOCUMENT_TAGGING_PROMPT_ZH = (
-    "你是一个文档打标签助手。以下是一份文档的文本内容，请判断这份文档的类型，并提取关键标签。\n"
-    "要求：\n"
-    "1. document_type 是这份文档的类型（如：发票、合同、简历、会议纪要、产品规格书、新闻报道等），只给一个最贴切的；\n"
-    "2. tags 是从文档中提取出的关键实体或主题词的**具体内容**，不是字段名本身——比如原文写的是"
-    "\"开票日期：2026年09月10日\"，标签要写\"2026年09月10日\"这个具体日期，不要写\"开票日期\"这个"
-    "字段名；原文写的是\"销售方名称：深圳市镭视存储技术有限公司\"，标签要写这个具体公司名，不要写"
-    "\"销售方名称\"。尽量覆盖不同类别，不要漏掉容易被忽略的结构化信息，包括但不限于：公司名/人名、"
-    "金额、日期、编号类字段的实际编号（发票号/合同编号/税号等的具体数值，如果文档里有的话）、"
-    "职位/产品名，以及文档主题相关的专业术语或技术名词；5~15个；\n"
-    "3. 数字、金额、日期这类信息要如实按文档原文摘录，不要自己简化、改写位数或四舍五入；\n"
-    "4. 不确定的内容不要瞎猜；\n"
-    "5. 严格只输出如下 JSON，不要输出任何其他文字：\n"
-    '{{"document_type": "...", "tags": ["标签1", "标签2", ...]}}\n\n'
-    "文档内容：\n{document_text}"
-)
-
-DOCUMENT_TAGGING_PROMPT_EN = (
-    "You are a document tagging assistant. Below is the text content of a document. Determine the "
-    "document's type and extract key tags.\n"
-    "Requirements:\n"
-    "1. document_type is this document's type (e.g. invoice, contract, resume, meeting minutes, "
-    "product spec sheet, news article), give only the single best fit;\n"
-    "2. tags are the **actual extracted values** of key entities or topics in the document, not the "
-    "field labels themselves — e.g. if the source says \"Invoice date: 2026-09-10\", the tag should be "
-    "\"2026-09-10\", not the label \"invoice date\"; if it says \"Seller: Shenzhen Ruishi Storage "
-    "Technology Co., Ltd.\", the tag should be that actual company name, not the label \"seller\". "
-    "Cover different categories as much as possible — don't skip structured information that's easy "
-    "to overlook, including but not limited to: company/person names, amounts, dates, the actual "
-    "identifier values (invoice number, contract number, tax ID — the real number/code, if present), "
-    "job titles/product names, and domain-specific terminology relevant to the document's subject; "
-    "5-15 tags;\n"
-    "3. Numbers, amounts and dates must be copied exactly as they appear in the source — don't "
-    "simplify, round, or change the number of digits;\n"
-    "4. Don't guess at anything you're unsure of;\n"
-    "5. Output strictly the following JSON, nothing else:\n"
-    '{{"document_type": "...", "tags": ["tag1", "tag2", ...]}}\n\n'
-    "Document content:\n{document_text}"
-)
-
 PROMPTS = {
     "image_tagging": {"zh": IMAGE_TAGGING_PROMPT_ZH, "en": IMAGE_TAGGING_PROMPT_EN},
-    "document_tagging": {"zh": DOCUMENT_TAGGING_PROMPT_ZH, "en": DOCUMENT_TAGGING_PROMPT_EN},
 }
 
 
@@ -101,4 +60,3 @@ def get_prompt(name: str, lang: str = "zh") -> str:
 
 # 保留旧的模块级常量名，指向中文版，避免破坏还在用旧名字导入的代码。
 IMAGE_TAGGING_PROMPT = IMAGE_TAGGING_PROMPT_ZH
-DOCUMENT_TAGGING_PROMPT = DOCUMENT_TAGGING_PROMPT_ZH
