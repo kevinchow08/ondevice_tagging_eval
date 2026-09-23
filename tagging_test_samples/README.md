@@ -6,7 +6,7 @@
 
 ## 中文
 
-这批文件是给 [eval_pipeline](../eval_pipeline) 用的**测试输入**，不是"数据集"——没有附带标准答案文件。按照 [根目录 README](../README.md) 里说的评测思路，开放词表打标签任务不该用固定标准答案做字符串精确匹配评分，`*_manifest.csv` 里的"参考标签"只是弱参考，方便你自己人工核对，不是用来做 exact-match 打分的 ground truth。
+这批文件是给 [eval_pipeline](../eval_pipeline) 用的**测试输入 + 人工核实过的标准答案**。按照 [根目录 README](../README.md) 里说的评测思路，开放词表打标签任务不该用固定标准答案做字符串精确匹配评分——`ground_truth_images.csv`/`ground_truth_documents.csv` 里的标签是人工写好、核实过的答案，但比对用的是 embedding 语义相似度，不是精确字符串匹配，用同义词或不同粒度描述的正确输出不会被误伤。
 
 图片和文档打包成 `images.zip` / `documents.zip`（不直接入库原始文件），使用前先解压：
 
@@ -20,9 +20,10 @@ unzip documents.zip
 来源：ImageNet 每类抽 1 张的公开图片集（[github.com/EliSchwartz/imagenet-sample-images](https://github.com/EliSchwartz/imagenet-sample-images)），从原始 1000 类里按跨度均匀抽了 200 张，覆盖动物、交通工具、乐器、日用品、建筑等大类，避免只集中在某一个领域。
 
 - 文件名格式：`<WordNet ID>_<英文类别名>.JPEG`，类别名已经编码在文件名里，比如 `n01530575_brambling.JPEG` 就是一只燕雀。
-- `images_manifest.csv`：`filename` / `wordnet_id` / `reference_label_en` 三列，方便写脚本批量核对。
+- `ground_truth_images.csv`：`filename` / `wordnet_id` / `reference_label_en`（ImageNet 原始单一类别名，弱参考） / `tags`（人工核实过的完整标准答案，JSON数组，5~15个标签） / `confirmed` / `notes` 六列。`tags` 列是真正的评测基准，`reference_label_en` 只覆盖主体类别，覆盖不了颜色/数量/姿态这些其他维度。
+- 已知问题：`n01608432_kite.JPEG` 这张图，`reference_label_en` 标的是"kite"（鸢，一种猛禽），但实际图片内容是玉兰花，没有任何鸟——这是原始图片集本身的图文不符，不是标注错误，`ground_truth_images.csv` 里 `tags` 列已经按实际图片内容标注，`reference_label_en` 这一列对这张图不可信，仅供你知晓。
 
-用法：把这 200 张丢给被测模型跑一遍，输出标签跟文件名里的类别做**语义相似度**比对（不要用精确字符串匹配），或者挑几十张人工过一遍眼，看有没有明显瞎标、漏标。
+用法：把这 200 张丢给被测模型跑一遍，输出标签用 `score_semantic.py` 跟 `ground_truth_images.csv` 的 `tags` 列做**语义相似度**比对（不要用精确字符串匹配）。
 
 ### documents/（18 份）
 
@@ -49,24 +50,25 @@ unzip documents.zip
 | 17_绩效考核表_performance_review.pdf | 绩效考核表 |
 | 18_专利摘要_patent_abstract.pdf | 专利摘要（英文） |
 
-内容是真实句子、真实表格结构，不是随机字符堆砌，模型应该能从内容里读出"这是发票""这是合同"这类文档级标签，也能抽出其中的实体（公司名、金额、日期）。其中 `08_保密协议_nda.pdf` 故意留了个分类模糊的边界情形——NDA 本质上也是一种合同，模型判成"合同"不算错，这个可以用来观察裁判怎么处理这类模糊分类。
+内容是真实句子、真实表格结构，不是随机字符堆砌，模型应该能从内容里读出"这是发票""这是合同"这类文档级标签，也能抽出其中的实体（公司名、金额、日期）。`ground_truth_documents.csv` 的标准答案是直接对着每份文档的原文写的（这批文档本身也是同一个人写的，内容确定，可信度高），列结构：`filename` / `document_type_cn` / `document_type_en` / `language` / `tags_zh` / `tags_en` / `confirmed` / `notes`。`tags_zh`/`tags_en` 是同一份标准答案的中英文两个版本（互为翻译），不是"文档原文语言配对应语言的答案、另一语言留空"——每份文档两个版本都有人工核实过的完整内容。这样设计是因为公司名/日期这类实体如果跨语言比对，embedding 相似度会明显下降（长复合短语尤其明显），`score_semantic.py --lang` 传哪个语言，就用哪一份，避免"模型其实答对了、只是用了另一种语言"被误判成漏打。`08_保密协议_nda.pdf` 是个分类边界情形——NDA 本质上也是一种合同，`document_type_cn` 标的是"保密协议"，不是"合同"，但两者不算互斥，供你在看结果时留意。
 
 如果需要更大规模、更贴近真实业务场景的文档集，可以考虑：
 1. 用浏览器手动去 Hugging Face 等站点下载现成的文档分类数据集（比如 RVL-CDIP）；
 2. 自己准备一批脱敏后的真实文档（发票、合同扫描件等）。
 
+扩充这两个数据集（新增图片/文档）的时候，别忘了同步给 `ground_truth_images.csv`/`ground_truth_documents.csv` 补上新文件对应的人工标注行，不然新样本会被 `score_semantic.py` 直接跳过（找不到标准答案）。
+
 ### 建议的测试流程
 
-1. 用一个更强的模型对这 218 个样本先跑一遍（或者直接用 [llm_judge.py](../eval_pipeline/scripts/llm_judge.py) 的裁判评审路径，不需要单独生成参考标签）。
-2. 跑被测的端侧模型，拿到它自己的标签。
-3. 两边对比：语义相似度看覆盖率，或者把"原始内容 + 端侧模型标签"丢给强模型当裁判，问它有没有瞎编、有没有漏标、准不准。
-4. 图片和文档分开看结果，不要混在一起算一个总分——这是模型两种完全不同的能力。
+1. 跑被测的端侧模型，拿到它自己的标签（`tag_images.py`/`tag_documents.py`）。
+2. 用 `score_semantic.py` 对照 `ground_truth_*.csv` 算 precision/recall。
+3. 图片和文档分开看结果，不要混在一起算一个总分——这是模型两种完全不同的能力。
 
 ---
 
 ## English
 
-These files are **test inputs** for [eval_pipeline](../eval_pipeline), not a labeled dataset — there is no ground-truth answer key. Per the methodology in the [root README](../README.md), open-vocabulary tagging shouldn't be scored by exact string match against a fixed answer list; the "reference labels" in `*_manifest.csv` are a loose reference for manual spot-checking, not exact-match ground truth.
+These files are **test inputs plus a human-verified answer key** for [eval_pipeline](../eval_pipeline). Per the methodology in the [root README](../README.md), open-vocabulary tagging shouldn't be scored by exact string match against a fixed answer list — the tags in `ground_truth_images.csv`/`ground_truth_documents.csv` are a human-written, human-verified answer key, but matching uses embedding-based semantic similarity, not exact string matching, so correct outputs phrased with synonyms or a different granularity aren't penalized.
 
 Images and documents ship as `images.zip` / `documents.zip` (raw files aren't checked in directly) — unzip before use:
 
@@ -80,9 +82,10 @@ unzip documents.zip
 Source: one sample image per class from the public [ImageNet sample image set](https://github.com/EliSchwartz/imagenet-sample-images), evenly sampled to 200 images out of the original 1000 classes, spanning animals, vehicles, instruments, everyday objects, and buildings so no single domain dominates.
 
 - Filename format: `<WordNet ID>_<English class name>.JPEG` — the class name is encoded right in the filename, e.g. `n01530575_brambling.JPEG` is a brambling (a finch).
-- `images_manifest.csv`: three columns, `filename` / `wordnet_id` / `reference_label_en`, for scripting bulk checks.
+- `ground_truth_images.csv`: six columns — `filename` / `wordnet_id` / `reference_label_en` (the original single-class ImageNet label, a weak reference) / `tags` (the human-verified full answer key, a JSON array of 5-15 tags) / `confirmed` / `notes`. `tags` is the actual evaluation baseline; `reference_label_en` only covers the main subject's category, not color/count/pose/other dimensions.
+- Known issue: for `n01608432_kite.JPEG`, `reference_label_en` says "kite" (the bird of prey), but the image actually shows magnolia flowers with no bird at all — this is a mismatch in the source image set itself, not a labeling error. `tags` in `ground_truth_images.csv` reflects the actual image content; `reference_label_en` isn't trustworthy for this one file, noted here for awareness.
 
-Usage: run the candidate model over these 200 images and compare its output tags against the filename's class via **semantic similarity** (not exact string match), or manually eyeball a few dozen for obvious hallucination/omission.
+Usage: run the candidate model over these 200 images and compare its output tags against the `tags` column in `ground_truth_images.csv` using `score_semantic.py`'s **semantic similarity** matching (not exact string match).
 
 ### documents/ (18 files)
 
@@ -109,15 +112,16 @@ Public "real business document" datasets mostly require downloading from Hugging
 | 17_绩效考核表_performance_review.pdf | Performance review |
 | 18_专利摘要_patent_abstract.pdf | Patent abstract (English) |
 
-Content is real sentences and real table structures, not random characters — a model should be able to read document-level tags ("this is an invoice", "this is a contract") from the content, as well as extract entities (company names, amounts, dates). `08_保密协议_nda.pdf` deliberately sits on a fuzzy category boundary — an NDA is technically a kind of contract, so a model calling it "contract" isn't really wrong; it's a useful case for observing how the judge handles ambiguous classification.
+Content is real sentences and real table structures, not random characters — a model should be able to read document-level tags ("this is an invoice", "this is a contract") from the content, as well as extract entities (company names, amounts, dates). The answer key in `ground_truth_documents.csv` was written directly against each document's source text (these documents were authored by one person, so the content is deterministic and the answer key is high-confidence); columns: `filename` / `document_type_cn` / `document_type_en` / `language` / `tags_zh` / `tags_en` / `confirmed` / `notes`. `tags_zh`/`tags_en` are two full translations of the same answer key, not "native-language answer filled in, the other left blank" — every document has a complete, human-verified answer key in both languages. This exists because cross-lingual embedding similarity for entities like company names and dates drops noticeably (especially for longer compound phrases); `score_semantic.py --lang` picks whichever column matches, so a model that got the right answer in a different language doesn't get scored as if it missed it. `08_保密协议_nda.pdf` sits on a category boundary — an NDA is technically a kind of contract — `document_type_cn` is labeled "保密协议" (NDA), not "合同" (contract), though the two aren't mutually exclusive; worth keeping in mind when reading results.
 
 For a larger, more realistic document set, consider:
 1. Manually downloading an existing document classification dataset (e.g. RVL-CDIP) from a site like Hugging Face via a browser;
 2. Supplying your own de-identified real documents (invoices, scanned contracts, etc).
 
+When you grow either dataset (add new images/documents), remember to add a matching human-annotated row to `ground_truth_images.csv`/`ground_truth_documents.csv` — otherwise `score_semantic.py` will just skip the new files (no answer key found).
+
 ### Suggested evaluation flow
 
-1. Run a stronger model over these 218 samples once (or just use the [llm_judge.py](../eval_pipeline/scripts/llm_judge.py) judge path directly, which doesn't need a separately-generated reference tag set).
-2. Run the candidate on-device model to get its own tags.
-3. Compare the two: check coverage via semantic similarity, or hand "original content + candidate tags" to the stronger model as a judge and ask whether it hallucinated, missed anything, or got it right.
-4. Look at images and documents separately — don't blend them into one overall score, since they exercise completely different model capabilities.
+1. Run the candidate on-device model to get its own tags (`tag_images.py`/`tag_documents.py`).
+2. Run `score_semantic.py` to compute precision/recall against `ground_truth_*.csv`.
+3. Look at images and documents separately — don't blend them into one overall score, since they exercise completely different model capabilities.

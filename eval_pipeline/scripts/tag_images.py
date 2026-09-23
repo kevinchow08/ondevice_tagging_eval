@@ -59,7 +59,7 @@ def main():
     lang_suffix = "" if args.lang == "zh" else f"_{args.lang}"
     out_path = os.path.join(config.RESULTS_DIR, f"images_tags_{args.profile}{lang_suffix}.jsonl")
 
-    with open(config.IMAGES_MANIFEST, newline="", encoding="utf-8") as f:
+    with open(config.IMAGES_GROUND_TRUTH, newline="", encoding="utf-8-sig") as f:
         rows = list(csv.DictReader(f))
     if args.limit:
         rows = rows[: args.limit]

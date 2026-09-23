@@ -45,11 +45,13 @@ if not MODEL_PROFILES["reference"]["api_key"]:
         "在 eval_pipeline/.env 里设置，参考 .env.example。"
     )
 
-# 对应 tagging_test_samples 包解压后的路径，按需改成你实际存放的位置
+# 对应 tagging_test_samples 包解压后的路径，按需改成你实际存放的位置。
+# ground_truth_*.csv 既是跑哪些文件的清单，也是人工核实过的标准答案（tags 列）——
+# 不再需要单独的 manifest.csv + 裁判模型比对，这份文件本身就是评测的基准。
 IMAGES_DIR = "../tagging_test_samples/images"
-IMAGES_MANIFEST = "../tagging_test_samples/images_manifest.csv"
+IMAGES_GROUND_TRUTH = "../tagging_test_samples/ground_truth_images.csv"
 DOCS_DIR = "../tagging_test_samples/documents"
-DOCS_MANIFEST = "../tagging_test_samples/documents_manifest.csv"
+DOCS_GROUND_TRUTH = "../tagging_test_samples/ground_truth_documents.csv"
 
 RESULTS_DIR = "results"
 
@@ -59,19 +61,11 @@ SEMANTIC_MATCH_THRESHOLD = 0.55
 REQUEST_TIMEOUT_SECONDS = 60
 MAX_RETRIES = 2
 
-# summarize.py"分级判定"用的阈值：瞎编率(CHAIR_s)、漏打率哪个落在更差的档位，就用哪个定颜色
-# （短板原则）。这是写死但可调的规则，不是AI临场判断——具体数字要按你自己的业务风险容忍度定，
+# summarize.py"分级判定"用的阈值：瞎编率、漏打率（都是对着人工闭集标签库算出来的，
+# 不再是 LLM 裁判的主观判断）哪个落在更差的档位，就用哪个定颜色（短板原则）。
+# 这是写死但可调的规则，不是AI临场判断——具体数字要按你自己的业务风险容忍度定，
 # 这里给的只是一个中性起点，不代表"标准答案"，改这两组数字就能调整分级的松紧。
 QUALITY_GATE = {
     "green_halluc": 0.10, "green_missing": 0.30,
     "yellow_halluc": 0.25, "yellow_missing": 0.60,
 }
-
-# 人工校准要满足这两个条件，QUALITY_GATE 算出来的颜色判定才算"可信"：
-# 1. 填了判断的条数至少达到 CALIBRATION_MIN_N——填太少（比如1、2条）算出来的"一致率"本身
-#    没有统计意义，不该拿来给判定背书；
-# 2. 一致率至少达到 CALIBRATION_TRUST_THRESHOLD——低于这个，说明裁判本身系统性不可靠，
-#    这时候瞎编率/漏打率这些数字很可能是裁判编出来的，不能直接采信，报告会明确标注不采信，
-#    不会因为"反正算过校准了"就摆出一副confident的样子。
-CALIBRATION_MIN_N = 10
-CALIBRATION_TRUST_THRESHOLD = 0.7

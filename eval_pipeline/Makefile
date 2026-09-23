@@ -1,7 +1,6 @@
 # 常用命令组合的简写。都在 eval_pipeline/ 目录下跑：make <target>
 # 想覆盖参数就在后面加 VAR=值，比如：
 #   make tag-images LIMIT=20
-#   make judge-images LIMIT=20 PROMPT_LANG=en
 #   make tag-images PROFILE=reference CONCURRENCY=4
 # 不传就用下面这些默认值。
 
@@ -9,15 +8,11 @@ PROFILE ?= small
 LIMIT ?=
 CONCURRENCY ?= 1
 PROMPT_LANG ?= zh
-CALIBRATION_N ?= 30
-CALIBRATION_SEED ?= 42
-LOSS_RATIO ?= 0.8
 
 LIMIT_FLAG = $(if $(LIMIT),--limit $(LIMIT))
 
 .PHONY: setup unzip smoke tag-images tag-documents tag-images-reference tag-documents-reference \
-        judge-images judge-documents semantic-images semantic-documents \
-        calibration-images calibration-documents summarize full clean help
+        semantic-images semantic-documents summarize full clean help
 
 help:
 	@echo "常用命令："
@@ -26,23 +21,18 @@ help:
 	@echo "  make smoke                小样本冒烟测试（5张图+2份文档，本地免费）"
 	@echo "  make tag-images           被测(small)模型给图片打标签（默认全量，可加 LIMIT=N，本地免费）"
 	@echo "  make tag-documents        被测(small)模型给文档打标签"
-	@echo "  make tag-images-reference    参考(reference)模型独立给图片打一遍标签（付费，给 semantic-images 用）"
-	@echo "  make tag-documents-reference 参考(reference)模型独立给文档打一遍标签（付费，给 semantic-documents 用）"
-	@echo "  make judge-images         LLM裁判评审图片（默认全量，建议先 LIMIT=20 抽查，付费）"
-	@echo "  make judge-documents      LLM裁判评审文档（付费）"
-	@echo "  make semantic-images      语义相似度打分-图片（前提：先跑过 tag-images 和 tag-images-reference）"
-	@echo "  make semantic-documents   语义相似度打分-文档（前提：先跑过 tag-documents 和 tag-documents-reference）"
-	@echo "  make calibration-images    抽样导出图片人工校准表（免费，本地数据，默认30条，可加 CALIBRATION_N=N）"
-	@echo "  make calibration-documents 抽样导出文档人工校准表（免费，样本量不超CALIBRATION_N就全审，超了才真正抽样）"
-	@echo "  make summarize            汇总成 results/summary_report.md（含分级判定+校准状态，放在报告最前面）"
-	@echo "  make full                 本地打标签(图片+文档) + 汇总，不含付费步骤"
-	@echo "  make clean                清空 results/ 下生成的文件（calibration_*.csv 不会被删，人工标注的东西不会被清掉）"
+	@echo "  make semantic-images      语义相似度打分-图片，对照 ground_truth_images.csv（本地免费，前提：先跑过 tag-images）"
+	@echo "  make semantic-documents   语义相似度打分-文档，对照 ground_truth_documents.csv（前提：先跑过 tag-documents）"
+	@echo "  make summarize            汇总成 results/summary_report.md（分级判定放在报告最前面）"
+	@echo "  make full                 本地全流程：打标签(图片+文档) + 语义打分 + 汇总，全程不需要调用付费云端API"
+	@echo "  make tag-images-reference    可选：参考(reference)云端模型独立给图片打一遍标签（付费，仅用于你想额外对比"
+	@echo "                                云端模型自己的输出时手动参考，不是评测主流程必需——评测基准是"
+	@echo "                                tagging_test_samples/ground_truth_*.csv 这份人工闭集标签库，不是这个）"
+	@echo "  make tag-documents-reference 同上，文档版"
+	@echo "  make clean                清空 results/ 下生成的文件（tagging_test_samples/ground_truth_*.csv 不在这里，不会被清掉）"
 	@echo ""
-	@echo "可覆盖变量：PROFILE(默认small，tag-images/tag-documents可以传 PROFILE=reference 效果等价于下面两个专用命令)"
+	@echo "可覆盖变量：PROFILE(默认small，tag-images/tag-documents可以传 PROFILE=reference 效果等价于上面两个专用命令)"
 	@echo "           LIMIT(默认不限) CONCURRENCY(默认1) PROMPT_LANG(默认zh)"
-	@echo "           CALIBRATION_N(默认30) CALIBRATION_SEED(默认42) LOSS_RATIO(默认0.8，抽样里\"候选输了\"占的比例)"
-	@echo "           LIMIT/CONCURRENCY/PROMPT_LANG 对 tag-images-reference/tag-documents-reference 同样生效，"
-	@echo "           比如：make tag-images-reference LIMIT=20 CONCURRENCY=4"
 
 setup:
 	python -m venv .venv
@@ -67,29 +57,16 @@ tag-images-reference:
 tag-documents-reference:
 	python scripts/tag_documents.py --profile reference $(LIMIT_FLAG) --concurrency $(CONCURRENCY) --lang $(PROMPT_LANG)
 
-judge-images:
-	python scripts/llm_judge.py --kind images $(LIMIT_FLAG) --concurrency $(CONCURRENCY) --lang $(PROMPT_LANG)
-
-judge-documents:
-	python scripts/llm_judge.py --kind documents $(LIMIT_FLAG) --concurrency $(CONCURRENCY) --lang $(PROMPT_LANG)
-
 semantic-images:
 	python scripts/score_semantic.py --kind images
 
 semantic-documents:
 	python scripts/score_semantic.py --kind documents
 
-calibration-images:
-	python scripts/build_calibration_sample.py --kind images --n $(CALIBRATION_N) --seed $(CALIBRATION_SEED) --loss-ratio $(LOSS_RATIO)
-
-calibration-documents:
-	python scripts/build_calibration_sample.py --kind documents --n $(CALIBRATION_N) --seed $(CALIBRATION_SEED) --loss-ratio $(LOSS_RATIO)
-
 summarize:
 	python scripts/summarize.py
 
-full: tag-images tag-documents summarize
+full: tag-images tag-documents semantic-images semantic-documents summarize
 
 clean:
-	rm -f results/*.jsonl results/*.md
-	find results -maxdepth 1 -name "*.csv" ! -name "calibration_*.csv" -delete 2>/dev/null || true
+	rm -f results/*.jsonl results/*.md results/*.csv
